@@ -85,7 +85,7 @@ DOUBAO_ACCESS_TOKEN=...
 
 ## 配置
 
-先修改 `bridge.yaml`，至少确认这些字段：
+先准备好 `bridge.yaml`，至少确认这些字段：
 
 - `capture_device`
 - `playback_device`
@@ -104,6 +104,14 @@ codex_timeout_seconds: 60
 capture_device: "Voicemeeter Out B1"
 playback_device: "Voicemeeter AUX Input"
 ```
+
+然后执行一次初始化命令，让运行目录和运行时文件自动补齐：
+
+```powershell
+python .\main.py status
+```
+
+这一步之后，如果 `bridge-home/` 不存在，程序会自动从 `bridge-home.example/` 补一份；`bridge-home/assistant-runtime.yaml` 也会随之可用。
 
 再修改 `bridge-home/assistant-runtime.yaml`，这里放运行时风格配置，比如：
 
