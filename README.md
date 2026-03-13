@@ -55,11 +55,14 @@ Python 依赖通过 `requirements.txt` 安装，不依赖 `uv`。
 git clone <your-repo-url> F:\VoiceBridge
 cd F:\VoiceBridge
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -U pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\Activate.ps1
+python -m pip install -U pip
+python -m pip install -r requirements.txt
 Copy-Item .\.env.example .\.env
 Copy-Item .\bridge.example.yaml .\bridge.yaml
 ```
+
+如果你不用虚拟环境，也可以直接用当前系统里的 `python` 执行后续命令；README 不再假设解释器路径固定在 `.venv\Scripts\python.exe`。
 
 `.env` 至少需要可用的语音凭据，例如：
 
@@ -120,31 +123,31 @@ playback_device: "Voicemeeter AUX Input"
 列出本机音频设备：
 
 ```powershell
-.\.venv\Scripts\python.exe .\main.py devices
+python .\main.py devices
 ```
 
 启动桥接：
 
 ```powershell
-.\.venv\Scripts\python.exe .\main.py run
+python .\main.py run
 ```
 
 查看运行状态：
 
 ```powershell
-.\.venv\Scripts\python.exe .\main.py status
+python .\main.py status
 ```
 
 查看当前 Codex 会话：
 
 ```powershell
-.\.venv\Scripts\python.exe .\main.py session
+python .\main.py session
 ```
 
 重置保存的 Codex 会话：
 
 ```powershell
-.\.venv\Scripts\python.exe .\main.py reset-session
+python .\main.py reset-session
 ```
 
 ## 当前行为
