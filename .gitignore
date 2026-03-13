@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+.env
+bridge.yaml
+bridge-home/
+
+runtime/logs/
+models/
+.voicebridge-session.json
+tmp-*.txt

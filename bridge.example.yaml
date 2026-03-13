@@ -1,0 +1,44 @@
+speech_provider: "volcengine"
+volcengine_app_id:
+volcengine_access_key:
+volcengine_asr_resource_id: "volc.bigasr.auc_turbo"
+volcengine_tts_resource_id: "seed-tts-2.0"
+volcengine_tts_speaker: "zh_female_vv_uranus_bigtts"
+volcengine_tts_format: "wav"
+volcengine_tts_sample_rate: 24000
+volcengine_tts_speed_ratio: 1.0
+volcengine_tts_volume_ratio: 1.0
+volcengine_tts_pitch_ratio: 1.0
+
+assistant_runtime_config_path: "./bridge-home/assistant-runtime.yaml"
+assistant_runtime_example_path: "./bridge-home.example/assistant-runtime.yaml"
+
+codex_workspace: "./bridge-home"
+codex_command: "codex.cmd"
+codex_model: "gpt-5.3-codex-spark"
+codex_fallback_model: "gpt-5"
+codex_use_yolo: true
+codex_session_state_file: ".voicebridge-session.json"
+codex_timeout_seconds: 60
+
+capture_device: "Voicemeeter Out B1"
+playback_device: "Voicemeeter AUX Input"
+
+sample_rate: 16000
+channels: 1
+frame_ms: 20
+vad_mode: 3
+vad_rms_threshold: 1400
+speech_start_min_voiced_ms: 160
+min_speech_ms: 400
+silence_ms: 900
+preroll_ms: 300
+max_utterance_ms: 15000
+
+bridge_interrupt_playback: true
+bridge_cancel_codex_on_interrupt: false
+bridge_chunk_chars: 36
+
+play_remote_audio: true
+print_transcript: true
+print_status: true

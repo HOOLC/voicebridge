@@ -1,0 +1,25 @@
+version: 1
+
+voice:
+  provider: "volcengine"
+  tts_resource_id: "seed-tts-2.0"
+  tts_speaker: "zh_female_vv_uranus_bigtts"
+  format: "wav"
+  sample_rate: 24000
+  speed_ratio: 1.1
+
+ack:
+  default: "收到啦"
+  variants:
+    - "收到啦"
+    - "好呀，收到"
+    - "嗯嗯，收到"
+    - "在呢，收到啦"
+
+style:
+  codex_reply_style_prompt: "你正在电话里回复用户。回答要短、自然、适合直接念出来。除非用户明确要求，否则不要念代码、路径、命令、JSON 或中间过程。"
+
+interaction:
+  interrupt_playback: true
+  cancel_codex_on_interrupt: false
+  reply_chunk_chars: 36
