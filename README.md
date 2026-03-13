@@ -62,21 +62,23 @@ python -m pip install -r requirements.txt
 
 如果你不用虚拟环境，也可以直接用当前系统里的 `python` 执行后续命令；README 不再假设解释器路径固定在 `.venv\Scripts\python.exe`。
 
-安装阶段不需要手动复制 `bridge-home/` 或 `bridge-home.example/`。如果运行目录缺失，执行 `python .\main.py run` 时会自动从模板补一份。
-
-需要你手动准备的是：
-
-- `.env`
-- `bridge.yaml`
-
-通常做法是：
+安装后需要先准备 `bridge.yaml`，这是启动前唯一必须存在的本地配置文件。通常直接从示例复制：
 
 ```powershell
-Copy-Item .\.env.example .\.env
 Copy-Item .\bridge.example.yaml .\bridge.yaml
 ```
 
-`.env` 至少需要可用的语音凭据，例如：
+`.env` 不是必须文件。如果你想把语音服务凭据保存在项目目录里，再复制：
+
+```powershell
+Copy-Item .\.env.example .\.env
+```
+
+如果你已经在系统环境变量里配置了这些值，可以不创建 `.env`。
+
+安装阶段不需要手动复制 `bridge-home/`、`bridge-home.example/` 或 `bridge-home/assistant-runtime.yaml`。如果这些运行目录和文件缺失，执行 `python .\main.py run`、`python .\main.py status` 或 `python .\main.py session` 时会自动从模板补齐。
+
+`.env` 里常见的是：
 
 ```text
 DOUBAO_APP_ID=...
