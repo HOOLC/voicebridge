@@ -58,11 +58,23 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
 python -m pip install -r requirements.txt
-Copy-Item .\.env.example .\.env
-Copy-Item .\bridge.example.yaml .\bridge.yaml
 ```
 
 如果你不用虚拟环境，也可以直接用当前系统里的 `python` 执行后续命令；README 不再假设解释器路径固定在 `.venv\Scripts\python.exe`。
+
+安装阶段不需要手动复制 `bridge-home/` 或 `bridge-home.example/`。如果运行目录缺失，执行 `python .\main.py run` 时会自动从模板补一份。
+
+需要你手动准备的是：
+
+- `.env`
+- `bridge.yaml`
+
+通常做法是：
+
+```powershell
+Copy-Item .\.env.example .\.env
+Copy-Item .\bridge.example.yaml .\bridge.yaml
+```
 
 `.env` 至少需要可用的语音凭据，例如：
 
