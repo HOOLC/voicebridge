@@ -110,6 +110,8 @@ def _parse_structured_feishu_message(raw_text: str) -> FeishuMessage | None:
     if not isinstance(payload, dict):
         return None
 
+    payload = _normalize_nested_table_card_payload(payload)
+
     vb_type = str(payload.get("vb_type", "")).strip().lower()
     if vb_type == "report_card":
         return _build_report_card_message(payload)
@@ -129,6 +131,65 @@ def _parse_structured_feishu_message(raw_text: str) -> FeishuMessage | None:
             preview_text = f"[{msg_type}]"
 
     return FeishuMessage(msg_type=msg_type, content=content, preview_text=preview_text)
+
+
+def _normalize_nested_table_card_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    table_card = payload.get("table_card")
+    if not isinstance(table_card, dict):
+        return payload
+
+    columns = _normalize_string_items(table_card.get("columns"))
+    raw_rows = table_card.get("rows")
+    rows: list[list[str]] = []
+    if isinstance(raw_rows, list):
+        for item in raw_rows:
+            if isinstance(item, dict) and columns:
+                rows.append([str(item.get(column, "")).strip() for column in columns])
+            elif isinstance(item, list):
+                rows.append([str(cell).strip() for cell in item])
+
+    notes_value = payload.get("notes")
+    notes: list[str] = []
+    if isinstance(notes_value, dict):
+        for key, value in notes_value.items():
+            if isinstance(value, list):
+                for line in value:
+                    line_text = str(line).strip()
+                    if line_text:
+                        notes.append(f"{key}：{line_text}")
+            else:
+                value_text = str(value).strip()
+                if value_text:
+                    notes.append(f"{key}：{value_text}")
+    else:
+        notes = _normalize_string_items(notes_value)
+
+    title = (
+        _clean_inline_text(payload.get("title"))
+        or _clean_inline_text(table_card.get("title"))
+        or "巡检结果"
+    )
+    summary = (
+        _clean_multiline_text(payload.get("summary"))
+        or _clean_multiline_text(table_card.get("summary"))
+        or ""
+    )
+    preview_text = (
+        _clean_inline_text(payload.get("preview_text"))
+        or _clean_inline_text(table_card.get("preview_text"))
+        or summary
+        or title
+    )
+
+    return {
+        "vb_type": "table_card",
+        "title": title,
+        "summary": summary,
+        "columns": columns,
+        "rows": rows,
+        "notes": notes,
+        "preview_text": preview_text,
+    }
 
 
 def _load_json_object(raw_text: str) -> Any:

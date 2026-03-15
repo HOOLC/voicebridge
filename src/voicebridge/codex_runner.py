@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from .config import BridgeConfig
 from .interactions import AssistantReply, TurnSource, parse_assistant_reply
@@ -277,7 +278,8 @@ class CodexRunner:
 
         memory_context = load_memory_context(self.config)
         file_block = (
-            "如果用户要求你调整语音助手自己的行为、音色、模式或确认词，你可以直接修改这些文件：\n"
+            "当前工作目录的 AGENTS.md 是主要规则来源；先读它，再处理用户请求。\n"
+            "如果用户要求你调整语音助手自己的行为、音色、模式或确认词，可以直接修改这些文件：\n"
             f"- 运行配置：{self.config.assistant_runtime_config_path}\n"
             f"- 长期记忆：{self.config.assistant_memory_path}\n"
             f"- 当日记忆目录：{self.config.assistant_daily_memory_dir}\n"
@@ -287,11 +289,10 @@ class CodexRunner:
 
         if prefer_voice_reply:
             return (
-                "你正在和电话另一头的用户沟通。\n"
-                "你的输出会被直接转成语音播报，所以只说用户真正需要听到的话。\n"
+                "你正在电话通道中工作。\n"
                 f"{source_line}\n"
-                "要求：中文、简短、自然、像电话汇报；不要念代码、路径、命令、JSON、Markdown、思考过程或工具过程。\n"
-                "具体的电话汇报习惯和定制化风格，遵循当前工作目录里的 AGENTS.md。\n"
+                "输出会直接转成语音播报，只说最终要给用户听的话。\n"
+                "不要输出思考过程、工具过程、代码、路径、命令、JSON 或 Markdown。\n"
                 f"{file_block}"
                 f"{memory_block}"
                 "如果这轮没有必要播报给用户，请只输出 [silence]。\n"
@@ -299,22 +300,11 @@ class CodexRunner:
             )
 
         return (
-            "你正在飞书上和用户沟通。\n"
-            "你的输出会直接发送到飞书私聊，可以比电话模式更自由，但仍然只输出最终要发出去的内容。\n"
+            "你正在飞书私聊通道中工作。\n"
             f"{source_line}\n"
-            "要求：中文、简洁、自然；不要输出思考过程、工具过程、命令输出或中间状态。\n"
-            "具体的飞书输出风格和巡检汇报重点，遵循当前工作目录里的 AGENTS.md。\n"
-            "短问题直接输出最终文本。\n"
-            "如果是巡检、状态、日报、汇总、对比、包含多段信息、需要展示进展/卡点/待决策，优先输出一个纯 JSON 对象，不要包 Markdown 代码块。\n"
-            "对 /boss 查看、巡检、状态、日报、session 汇总这类逐项对比场景，默认优先输出 table_card，不要退化成 report_card。\n"
-            "你可以使用三种结构化格式：\n"
-            "1. 直接输出飞书原生格式："
-            '{"msg_type":"text|post|interactive","content":{...},"preview_text":"简短预览"}\n'
-            "2. 输出 report_card："
-            '{"vb_type":"report_card","title":"标题","summary":"一句话结论","facts":[{"label":"主会话","value":"正常"}],"sections":[{"title":"Agent 进展","bullets":["alpha | Codex | 正在处理任务A | 进度 60%"]}],"blockers":["无"],"decisions":["无"],"next_steps":["继续观察"],"preview_text":"巡检：整体正常"}\n'
-            "3. 输出 table_card："
-            '{"vb_type":"table_card","title":"标题","summary":"一句话结论","columns":["Session","进程","当前任务","进展","卡点"],"rows":[["alpha","Codex","任务A","60%","无"]],"notes":["需要用户决策：无"],"preview_text":"巡检：整体正常"}\n'
-            "结构化消息优先服务于飞书可读性：标题短、结论前置、字段少而准；简单问题不要硬上卡片。\n"
+            "只输出最终要发给用户的内容，不要输出思考过程、工具过程、命令输出或中间状态。\n"
+            "默认直接回答；只有在当前工作目录 AGENTS.md 明确要求结构化汇报，或你判断结构化更合适时，才输出 JSON 对象。\n"
+            "如果输出 JSON，不要包 Markdown 代码块。\n"
             f"{file_block}"
             f"{memory_block}"
             f"{patrol_block}"
@@ -338,9 +328,284 @@ class CodexRunner:
             return ""
 
         return (
-            "这是巡检 / 状态汇报类请求，具体的聚焦点和格式遵循当前工作目录里的 AGENTS.md。\n"
-            "这类请求默认输出 table_card；列优先放 Session、进程、当前任务、进展、卡点，补充说明放到 notes。\n"
+            "这是巡检 / 状态汇报类请求。\n"
+            "查看和巡检本质上是同一类任务：都要总结 tmux session、QuantDev 仓库下的 channel.md 和 dashboard.md；区别只是巡检可以发督促，查看不发督促。\n"
+            "这类请求默认输出 report_card JSON，按 session 分段汇报，不要退化成普通文本或 Markdown 表格。\n"
+            '默认 schema：{"vb_type":"report_card","title":"标题","summary":"一句话结论","facts":[{"label":"Session数","value":"3"}],"sections":[{"title":"4 | Claude | running","bullets":["当前任务：...","进展：...","卡点：无"]}],"blockers":["无"],"decisions":["无"],"next_steps":["继续观察"],"preview_text":"简短预览"}\n'
+            "只有在回测结果、年度绩效、任务队列这类天然适合矩阵展示的数据上，才改用 table_card。\n"
+            "巡检口径和汇报重点，优先遵循当前工作目录里的 AGENTS.md。\n"
+            "必须先基于下面这份程序侧预采样结果作答，不要自己猜 session 数量，也不要拿旧上下文补出预采样里不存在的 session。\n"
+            "如果预采样和历史上下文冲突，以预采样为准；如果信息不足，就明确写缺失项，不要脑补。\n"
+            f"{self._collect_patrol_context()}"
+            f"{self._collect_collab_context()}"
         )
+
+    def _collect_patrol_context(self) -> str:
+        timestamp = datetime.now().isoformat(timespec="seconds")
+        session_result = self._run_preflight_command(["wsl", "tmux", "list-sessions"], timeout=10)
+        if session_result["returncode"] != 0:
+            return (
+                "程序预采样结果：\n"
+                f"- 采样时间：{timestamp}\n"
+                f"- tmux list-sessions 失败：{session_result['output'] or '无输出'}\n"
+            )
+
+        session_lines = [line.strip() for line in session_result["output"].splitlines() if line.strip()]
+        if not session_lines:
+            return (
+                "程序预采样结果：\n"
+                f"- 采样时间：{timestamp}\n"
+                "- tmux 当前无 session\n"
+            )
+
+        pane_result = self._run_preflight_command(
+            [
+                "wsl",
+                "tmux",
+                "list-panes",
+                "-a",
+                "-F",
+                "#{session_name}:#{window_index}.#{pane_index} pid=#{pane_pid} cmd=#{pane_current_command} title=#{pane_title}",
+            ],
+            timeout=10,
+        )
+        pane_lines = [line.strip() for line in pane_result["output"].splitlines() if line.strip()]
+        pane_items = [self._parse_pane_line(line) for line in pane_lines]
+        pane_items = [item for item in pane_items if item]
+
+        first_captures: dict[str, str] = {}
+        for item in pane_items:
+            first_captures[item["target"]] = self._capture_pane(item["target"])
+
+        time.sleep(3)
+
+        second_captures: dict[str, str] = {}
+        for item in pane_items:
+            second_captures[item["target"]] = self._capture_pane(item["target"])
+
+        lines = [
+            "程序预采样结果：",
+            f"- 采样时间：{timestamp}",
+            f"- 实际 session 数：{len(session_lines)}",
+        ]
+
+        for session_line in session_lines:
+            lines.append(f"- session: {session_line}")
+
+        if pane_result["returncode"] != 0:
+            lines.append(f"- list-panes 失败：{pane_result['output'] or '无输出'}")
+            return "\n".join(lines) + "\n"
+
+        if not pane_items:
+            lines.append("- list-panes 返回为空，无法识别 pane")
+            return "\n".join(lines) + "\n"
+
+        for item in pane_items:
+            target = item["target"]
+            child_processes = self._get_child_processes(item["pane_pid"]) if item["pane_pid"] else ""
+            agent_type = self._detect_agent_type(
+                pane_command=item["pane_command"],
+                pane_title=item["pane_title"],
+                child_processes=child_processes,
+            )
+            snap1 = first_captures.get(target, "")
+            snap2 = second_captures.get(target, "")
+            status_hint = self._classify_patrol_status(agent_type=agent_type, snap1=snap1, snap2=snap2)
+            delta_hint = "diff" if snap1 and snap2 and snap1 != snap2 else "same"
+
+            lines.append(
+                f"\n[{item['session_name']}] target={target} agent={agent_type} cmd={item['pane_command'] or '-'} "
+                f"title={item['pane_title'] or '-'} status_hint={status_hint} snapshots={delta_hint}"
+            )
+            if child_processes:
+                lines.append("child_processes:")
+                lines.append(child_processes)
+            lines.append("snapshot_last_20:")
+            lines.append(snap2 or "(capture failed)")
+
+        return "\n".join(lines) + "\n"
+
+    def _collect_collab_context(self) -> str:
+        timestamp = datetime.now().isoformat(timespec="seconds")
+        channel_result = self._run_preflight_command(
+            [
+                "wsl",
+                "bash",
+                "-lc",
+                "if [ -f ~/QuantDev/lab/collab/channel.md ]; then tail -n 120 ~/QuantDev/lab/collab/channel.md; else echo '__MISSING__'; fi",
+            ],
+            timeout=10,
+        )
+        dashboard_result = self._run_preflight_command(
+            [
+                "wsl",
+                "bash",
+                "-lc",
+                "if [ -f ~/QuantDev/lab/collab/dashboard.md ]; then sed -n '1,160p' ~/QuantDev/lab/collab/dashboard.md; else echo '__MISSING__'; fi",
+            ],
+            timeout=10,
+        )
+
+        lines = [
+            "程序侧协作文件摘录：",
+            f"- 采样时间：{timestamp}",
+            "- channel.md（最近 120 行）:",
+            channel_result["output"] if channel_result["output"] and channel_result["output"] != "__MISSING__" else "(missing)",
+            "- dashboard.md（前 160 行）:",
+            dashboard_result["output"] if dashboard_result["output"] and dashboard_result["output"] != "__MISSING__" else "(missing)",
+        ]
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _run_preflight_command(command: list[str], *, timeout: int) -> dict[str, Any]:
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=timeout,
+            )
+        except Exception as error:  # noqa: BLE001
+            return {"returncode": -1, "output": str(error)}
+
+        output = "\n".join(
+            part.strip()
+            for part in (result.stdout, result.stderr)
+            if part and part.strip()
+        ).strip()
+        return {"returncode": result.returncode, "output": CodexRunner._clean_preflight_output(output)}
+
+    @staticmethod
+    def _clean_preflight_output(output: str) -> str:
+        if not output.strip():
+            return ""
+        cleaned_lines: list[str] = []
+        for raw_line in output.splitlines():
+            line = raw_line.rstrip()
+            stripped = line.strip()
+            if not stripped:
+                cleaned_lines.append("")
+                continue
+            lowered = stripped.lower()
+            if lowered.startswith("proxy set to:"):
+                continue
+            if "screen size is bogus" in lowered:
+                continue
+            cleaned_lines.append(line)
+        return "\n".join(cleaned_lines).strip()
+
+    @staticmethod
+    def _parse_pane_line(raw_line: str) -> dict[str, str] | None:
+        prefix, separator, suffix = raw_line.partition(" pid=")
+        if not separator:
+            return None
+
+        target, _, session_name = prefix.partition(":")
+        if not target or not session_name:
+            return None
+
+        pid_part, _, rest = suffix.partition(" cmd=")
+        cmd_part, _, title_part = rest.partition(" title=")
+        return {
+            "target": prefix.strip(),
+            "session_name": target.strip(),
+            "pane_pid": pid_part.strip(),
+            "pane_command": cmd_part.strip(),
+            "pane_title": title_part.strip(),
+        }
+
+    def _capture_pane(self, target: str) -> str:
+        result = self._run_preflight_command(
+            ["wsl", "tmux", "capture-pane", "-t", target, "-p", "-S", "-20"],
+            timeout=10,
+        )
+        return result["output"] if result["returncode"] == 0 else ""
+
+    def _get_child_processes(self, pane_pid: str) -> str:
+        if not pane_pid:
+            return ""
+        result = self._run_preflight_command(
+            ["wsl", "ps", "--ppid", pane_pid, "-o", "args="],
+            timeout=10,
+        )
+        return result["output"] if result["returncode"] == 0 else ""
+
+    @staticmethod
+    def _detect_agent_type(*, pane_command: str, pane_title: str, child_processes: str) -> str:
+        command = pane_command.strip().lower()
+        title = pane_title.strip()
+        children = child_processes.lower()
+
+        if command == "claude":
+            return "Claude"
+        if command == "node" and title.startswith("OC"):
+            return "OpenCode"
+        if command == "node" and "codex" in children:
+            return "Codex"
+        if command == "cursor":
+            return "Cursor"
+        if command in {"bash", "zsh", "fish"}:
+            return "Shell"
+        return "unknown"
+
+    @staticmethod
+    def _classify_patrol_status(*, agent_type: str, snap1: str, snap2: str) -> str:
+        if not snap1 or not snap2:
+            return "terminated"
+        if snap1 != snap2:
+            return "running"
+
+        nonempty_lines = [line.strip() for line in snap2.splitlines() if line.strip()]
+        if not nonempty_lines:
+            return "idle"
+
+        tail_10 = "\n".join(nonempty_lines[-10:])
+        tail_5 = "\n".join(nonempty_lines[-5:])
+        last_line = nonempty_lines[-1]
+
+        if any(token in tail_10 for token in ("[y/n]", "(Y/n)", "[Y/n]", "Please select", "Do you want")):
+            return "waiting-for-input"
+        if CodexRunner._has_numbered_choices(nonempty_lines[-6:]):
+            return "waiting-for-input"
+        if any(token in tail_5 for token in ("Error:", "error:", "FAILED", "Traceback (most recent call last)")):
+            return "errored"
+        if " panic " in f" {tail_5.lower()} ":
+            return "errored"
+
+        if agent_type == "Codex":
+            if "Working (" in tail_10 or "Thinking" in tail_10:
+                return "running"
+            if last_line.startswith("›") or "gpt-" in last_line:
+                return "idle"
+        elif agent_type == "Claude":
+            if last_line.startswith("❯") or last_line.startswith("⏵⏵"):
+                return "idle"
+        elif agent_type == "OpenCode":
+            if any(token in tail_10 for token in ("Thinking:", "Generating", "Queued")):
+                return "running"
+            if "enter submit" in tail_10:
+                return "waiting-for-input"
+            return "idle"
+        elif agent_type == "Shell":
+            if last_line.endswith(("$", "%", ">", "❯")):
+                return "idle"
+
+        return "idle"
+
+    @staticmethod
+    def _has_numbered_choices(lines: list[str]) -> bool:
+        matches = 0
+        for line in lines:
+            stripped = line.strip()
+            if stripped[:2].isdigit():
+                matches += 1
+                continue
+            if len(stripped) > 2 and stripped[0].isdigit() and stripped[1] == ".":
+                matches += 1
+        return matches >= 2
 
     def _parse_codex_output(
         self,
