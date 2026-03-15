@@ -142,7 +142,7 @@ class FeishuBridge:
         if not text:
             return
 
-        self._log("飞书", f"收到消息：{text}")
+        self._log("飞书", f"收到消息原文：{json.dumps(text, ensure_ascii=False)}")
         self._on_text(text)
 
     def _sender_matches(self, sender: object) -> bool:

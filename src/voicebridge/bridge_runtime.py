@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import queue
 import random
 import re
@@ -182,6 +183,7 @@ class BridgeRuntime:
             clean_text = clean_text[5:].strip()
             if not clean_text:
                 return
+        self._log("飞书", f"转发给 Codex：{json.dumps(clean_text, ensure_ascii=False)}")
         self._queue.put(
             QueuedTask(
                 turn=BridgeTurn(
@@ -294,6 +296,7 @@ class BridgeRuntime:
                 source=turn.source.value,
             )
 
+        self.store.clear_error()
         self.store.set_codex_busy(True)
         try:
             self._log("Codex", f"轮次={turn.turn_id}，已发送文本到 Codex")
@@ -409,6 +412,7 @@ class BridgeRuntime:
         if not self.feishu.enabled:
             return
         try:
+            self._log("飞书", f"发送消息类型={message.msg_type}，预览={json.dumps(message.preview_text, ensure_ascii=False)}")
             self.feishu.send(message)
         except Exception as error:  # noqa: BLE001
             self.store.record_error(f"飞书发消息失败：{error}")

@@ -306,6 +306,7 @@ class CodexRunner:
             "具体的飞书输出风格和巡检汇报重点，遵循当前工作目录里的 AGENTS.md。\n"
             "短问题直接输出最终文本。\n"
             "如果是巡检、状态、日报、汇总、对比、包含多段信息、需要展示进展/卡点/待决策，优先输出一个纯 JSON 对象，不要包 Markdown 代码块。\n"
+            "对 /boss 查看、巡检、状态、日报、session 汇总这类逐项对比场景，默认优先输出 table_card，不要退化成 report_card。\n"
             "你可以使用三种结构化格式：\n"
             "1. 直接输出飞书原生格式："
             '{"msg_type":"text|post|interactive","content":{...},"preview_text":"简短预览"}\n'
@@ -336,7 +337,10 @@ class CodexRunner:
         if not self._looks_like_patrol_request(user_text):
             return ""
 
-        return "这是巡检 / 状态汇报类请求，具体的聚焦点和格式遵循当前工作目录里的 AGENTS.md。\n"
+        return (
+            "这是巡检 / 状态汇报类请求，具体的聚焦点和格式遵循当前工作目录里的 AGENTS.md。\n"
+            "这类请求默认输出 table_card；列优先放 Session、进程、当前任务、进展、卡点，补充说明放到 notes。\n"
+        )
 
     def _parse_codex_output(
         self,
@@ -510,9 +514,12 @@ class CodexRunner:
         if not text:
             return False
         keywords = (
+            "/boss",
+            "boss",
             "巡检",
             "查岗",
             "状态",
+            "查看",
             "agent",
             "告警",
             "阻塞",

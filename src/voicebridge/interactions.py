@@ -106,11 +106,7 @@ def parse_assistant_reply(raw_reply: str, *, prefer_voice_reply: bool) -> Assist
 
 
 def _parse_structured_feishu_message(raw_text: str) -> FeishuMessage | None:
-    try:
-        payload = json.loads(raw_text)
-    except json.JSONDecodeError:
-        return None
-
+    payload = _load_json_object(raw_text)
     if not isinstance(payload, dict):
         return None
 
@@ -133,6 +129,94 @@ def _parse_structured_feishu_message(raw_text: str) -> FeishuMessage | None:
             preview_text = f"[{msg_type}]"
 
     return FeishuMessage(msg_type=msg_type, content=content, preview_text=preview_text)
+
+
+def _load_json_object(raw_text: str) -> Any:
+    candidates = [raw_text.strip()]
+    fenced = _strip_json_fence(raw_text)
+    if fenced and fenced not in candidates:
+        candidates.append(fenced)
+    extracted = _extract_first_json_object(raw_text)
+    if extracted and extracted not in candidates:
+        candidates.append(extracted)
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            repaired = _repair_json_candidate(candidate)
+            if not repaired or repaired == candidate:
+                continue
+            try:
+                return json.loads(repaired)
+            except json.JSONDecodeError:
+                continue
+    return None
+
+
+def _strip_json_fence(raw_text: str) -> str:
+    text = raw_text.strip()
+    if not text.startswith("```") or not text.endswith("```"):
+        return ""
+    lines = text.splitlines()
+    if not lines:
+        return ""
+    if lines[0].strip().lower() not in {"```", "```json", "```javascript", "```js"}:
+        return ""
+    if len(lines) < 2:
+        return ""
+    return "\n".join(lines[1:-1]).strip()
+
+
+def _extract_first_json_object(raw_text: str) -> str:
+    text = raw_text.strip()
+    start = text.find("{")
+    if start < 0:
+        return ""
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+            continue
+        if char == "{":
+            depth += 1
+            continue
+        if char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+
+    return ""
+
+
+def _repair_json_candidate(raw_text: str) -> str:
+    text = raw_text.strip()
+    if not text:
+        return ""
+
+    repaired = text
+    repaired = repaired.lstrip("\ufeff")
+    repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+    repaired = re.sub(r",\s*\"\"\s*(?=[}\],])", "", repaired)
+    repaired = re.sub(r"(\[\s*)\"\"\s*,", r"\1", repaired)
+    repaired = re.sub(r",\s*\"\"\s*(\])", r"\1", repaired)
+    repaired = re.sub(r"\[\s*,", "[", repaired)
+    return repaired.strip()
 
 
 def _build_report_card_message(payload: dict[str, Any]) -> FeishuMessage | None:
@@ -178,12 +262,16 @@ def _build_report_card_message(payload: dict[str, Any]) -> FeishuMessage | None:
             elements.append(_markdown_div("\n".join(lines)))
 
     if not elements:
-        elements.append(_markdown_div(preview_text))
+        elements.append({"tag": "markdown", "content": preview_text})
 
     content = {
+        "schema": "2.0",
         "config": {"wide_screen_mode": True},
-        "header": {"title": {"tag": "plain_text", "content": title[:80]}},
-        "elements": elements,
+        "header": {
+            "template": "blue",
+            "title": {"tag": "plain_text", "content": title[:80]},
+        },
+        "body": {"elements": elements},
     }
     return FeishuMessage(msg_type="interactive", content=content, preview_text=preview_text)
 
@@ -217,7 +305,10 @@ def _build_table_card_message(payload: dict[str, Any]) -> FeishuMessage | None:
     content = {
         "schema": "2.0",
         "config": {"wide_screen_mode": True},
-        "header": {"title": {"tag": "plain_text", "content": title[:80]}},
+        "header": {
+            "template": "blue",
+            "title": {"tag": "plain_text", "content": title[:80]},
+        },
         "body": {"elements": elements},
     }
     return FeishuMessage(msg_type="interactive", content=content, preview_text=preview_text)

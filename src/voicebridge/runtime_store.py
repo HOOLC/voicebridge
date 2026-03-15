@@ -79,6 +79,9 @@ class AssistantRuntimeStore:
     def record_error(self, message: str) -> None:
         self._update_runtime(last_error=str(message).strip())
 
+    def clear_error(self) -> None:
+        self._update_runtime(last_error="")
+
     def get_last_spoken_reply_text(self) -> str:
         with self._lock:
             state = self._read_state()
