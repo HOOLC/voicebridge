@@ -1,34 +1,96 @@
-# VoiceBridge Runtime Instructions
+# VoiceBridge 仓库开发说明
 
-You are the Codex runtime behind VoiceBridge.
+这份 `AGENTS.md` 服务于 **当前仓库本身的开发与维护**，不是运行中智能助手的人设文件。
 
-## Role
+## 目标
 
-- You run on Windows.
-- Your primary working directory is the repository root.
-- Any extra workspace or file access is defined by the local config.
-- Use the local project directory for bridge memory, runbooks, and helper files.
-- Use configured extra paths only when the local config points to them.
+- 维护和开发 `VoiceBridge` 这个软件。
+- 优先保证运行稳定、配置清晰、行为可验证。
+- 改动要尽量兼容现有语音链路、飞书链路和本地 Codex 会话机制。
 
-## Operating rules
+## 项目结构
 
-- For conversational or control-style user messages, answer directly and briefly.
-- Do not narrate repository pre-flight, file reading, or setup unless the user explicitly asks.
-- For coding or repo tasks, work pragmatically and directly.
-- If Linux-only commands or tmux are needed, call `wsl.exe bash -lc ...`.
-- Assume approval is bypassed and effective sandbox is `danger-full-access`.
+- 入口：`main.py`
+- 源码：`src/voicebridge/`
+- 主静态配置：`bridge.yaml`
+- 运行时目录：`bridge-home/`
+- 运行时模板：`bridge-home.example/`
+- 文档：`README.md`
 
-## Spoken output rules
+## 配置分层
 
-- Final user-facing output must be concise spoken Chinese by default.
-- Only say what should actually be spoken back to the user.
-- Do not expose thinking traces, tool logs, raw command output, or process narration.
+这套项目有两类配置，职责要分清：
 
-## Local memory files
+### 1. `bridge.yaml`
 
-- `bridge-home/AGENTS.md`
+这是 **安装级 / 机器级配置**，通常安装好以后不常改。
 
-## Key paths
+适合放这里的内容：
 
-- Dashboard path: defined by `bridge.yaml`
-- Channel path: defined by `bridge.yaml`
+- 音频设备
+- API 凭据入口
+- 工作目录路径
+- CLI 命令路径
+- 会话状态文件路径
+- 是否启用飞书
+- 这类偏“基础设施”的参数
+
+不适合把高频运营项堆到这里。
+
+### 2. `bridge-home/assistant-runtime.yaml`
+
+这是 **运行级 / 助手行为配置**，应该给运营和日常调优使用。
+
+适合放这里的内容：
+
+- 语音风格
+- 确认词
+- 交互风格
+- 汇报 prompt
+- 定时任务
+- 其它需要频繁微调的助手行为
+
+如果新增一类“经常改”的助手行为参数，优先考虑放进 `assistant-runtime.yaml`。
+
+## 开发原则
+
+- 优先做小而清晰的改动，不做大面积无关重构。
+- 新功能要尽量复用现有抽象，不要把语音、飞书、定时任务各写一套流程。
+- 电话模式和飞书模式要明确区分：
+  - 电话输出必须适合 TTS 播放
+  - 飞书输出可以更自由
+- 所有会影响播报质量的文本清洗，应该在进入 TTS 前完成，而不是污染飞书原文。
+- 如果改动涉及会话生命周期，要明确区分：
+  - 共享主 session
+  - 临时 session
+
+## 修改约定
+
+- 改 Python 源码后，至少执行一次：
+  - `python -m compileall src main.py`
+- 如果改了运行链路，优先补一轮最小冒烟验证。
+- 如果改了配置结构：
+  - 同步更新 `bridge.example.yaml`
+  - 同步更新 `bridge-home.example/assistant-runtime.yaml`
+  - 同步更新 `README.md`
+
+## 飞书相关约定
+
+- 只接收目标用户消息。
+- 默认只处理私聊文本消息。
+- 与飞书事件订阅相关的问题，先检查：
+  - 长连接是否连上
+  - 事件订阅是否开启
+  - `im.message.receive_v1` 是否已配置并发布
+
+## 语音相关约定
+
+- 任何不能稳定念出来的字符，应该在 TTS 前清洗。
+- 不要为了语音清洗去破坏飞书端原始文本。
+- 如果用户要求“更适合播报”，优先改 TTS 前清洗层或电话模式 prompt。
+
+## 文档边界
+
+- 根目录 `AGENTS.md` 只讲 **软件开发规则**。
+- `bridge-home/AGENTS.md` 才讲 **运行中的智能助手应该如何工作**。
+- 这两份文件不要混写。

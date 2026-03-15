@@ -1,0 +1,163 @@
+version: 1
+generated_at: '2026-03-15 21:27:48'
+voices:
+- name: Tina老师 2.0
+  id: zh_female_yingyujiaoxue_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 教育场景 | 中文
+- name: Vivi 2.0
+  id: zh_female_vv_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 豆包语音合成模型2.0 | 中文
+- name: 云舟 2.0
+  id: zh_male_m191_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 豆包语音合成模型2.0 | 中文
+- name: 佩奇猪 2.0
+  id: zh_female_peiqi_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 视频配音 | 中文
+- name: 儒雅逸辰
+  id: zh_male_ruyayichen_saturn_bigtts
+  aliases: []
+  description: tts-2.0 | 视频配音 | 中文
+- name: 儒雅逸辰 2.0
+  id: zh_male_ruyayichen_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 视频配音 | 中文
+- name: 儿童绘本
+  id: zh_female_xueayi_saturn_bigtts
+  aliases: []
+  description: tts-2.0 | 有声阅读 | 中文
+- name: 儿童绘本 2.0
+  id: zh_female_xiaoxue_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 有声阅读 | 中文
+- name: 刘飞 2.0
+  id: zh_male_liufei_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 豆包语音合成模型2.0 | 中文
+- name: 可爱女生
+  id: saturn_zh_female_keainvsheng_tob
+  aliases: []
+  description: tts-2.0 | 角色扮演 | 中文
+- name: 大壹
+  id: zh_male_dayi_saturn_bigtts
+  aliases: []
+  description: tts-2.0 | 视频配音 | 中文
+- name: 大壹 2.0
+  id: zh_male_dayi_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 视频配音 | 中文
+- name: 天才同桌
+  id: saturn_zh_male_tiancaitongzhuo_tob
+  aliases: []
+  description: tts-2.0 | 角色扮演 | 中文
+- name: 小何 2.0
+  id: zh_female_xiaohe_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 豆包语音合成模型2.0 | 中文
+- name: 小天 2.0
+  id: zh_male_taocheng_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 豆包语音合成模型2.0 | 中文
+- name: 少年梓辛/Brayan 2.0
+  id: zh_male_shaonianzixin_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 通用场景 | 中文
+- name: 撒娇学妹 2.0
+  id: zh_female_sajiaoxuemei_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 角色扮演 | 中文
+- name: 暖阳女声 2.0
+  id: zh_female_kefunvsheng_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 客服场景 | 中文
+- name: 流畅女声
+  id: zh_female_santongyongns_saturn_bigtts
+  aliases: []
+  description: tts-2.0 | 视频配音 | 中文
+- name: 流畅女声 2.0
+  id: zh_female_liuchangnv_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 视频配音 | 中文
+- name: 清新女声 2.0
+  id: zh_female_qingxinnvsheng_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 豆包语音合成模型2.0 | 中文
+- name: 温婉珊珊 2.0
+  id: saturn_zh_female_wenwanshanshan_cs_tob
+  aliases: []
+  description: tts-2.0 | 客服场景 | 中文
+- name: 热情艾娜 2.0
+  id: saturn_zh_female_reqingaina_cs_tob
+  aliases: []
+  description: tts-2.0 | 客服场景 | 中文
+- name: 爽快思思 2.0
+  id: zh_female_shuangkuaisisi_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 通用场景 | 中文
+- name: 爽朗少年
+  id: saturn_zh_male_shuanglangshaonian_tob
+  aliases: []
+  description: tts-2.0 | 角色扮演 | 中文
+- name: 猴哥 2.0
+  id: zh_male_sunwukong_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 视频配音 | 中文
+- name: 甜美小源 2.0
+  id: zh_female_tianmeixiaoyuan_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 通用场景 | 中文
+- name: 甜美桃子 2.0
+  id: zh_female_tianmeitaozi_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 通用场景 | 中文
+- name: 知性灿灿
+  id: saturn_zh_female_cancan_tob
+  aliases: []
+  description: tts-2.0 | 角色扮演 | 中文
+- name: 知性灿灿 2.0
+  id: zh_female_cancan_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 角色扮演 | 中文
+- name: 调皮公主
+  id: saturn_zh_female_tiaopigongzhu_tob
+  aliases: []
+  description: tts-2.0 | 角色扮演 | 中文
+- name: 轻盈朵朵 2.0
+  id: saturn_zh_female_qingyingduoduo_cs_tob
+  aliases: []
+  description: tts-2.0 | 客服场景 | 中文
+- name: 邻家女孩 2.0
+  id: zh_female_linjianvhai_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 通用场景 | 中文
+- name: 魅力女友
+  id: zh_female_meilinvyou_saturn_bigtts
+  aliases: []
+  description: tts-2.0 | 视频配音 | 中文
+- name: 魅力女友 2.0
+  id: zh_female_meilinvyou_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 通用场景 | 中文
+- name: 魅力苏菲 2.0
+  id: zh_male_sophie_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 豆包语音合成模型2.0 | 中文
+- name: 鸡汤女
+  id: zh_female_jitangnv_saturn_bigtts
+  aliases: []
+  description: tts-2.0 | 视频配音 | 中文
+- name: 鸡汤女 2.0
+  id: zh_female_jitangnv_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 视频配音 | 中文
+- name: 黑猫侦探社咪仔
+  id: zh_female_mizai_saturn_bigtts
+  aliases: []
+  description: tts-2.0 | 视频配音 | 中文
+- name: 黑猫侦探社咪仔 2.0
+  id: zh_female_mizai_uranus_bigtts
+  aliases: []
+  description: tts-2.0 | 视频配音 | 中文

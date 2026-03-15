@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import BridgeConfig
+from .interactions import AssistantReply, TurnSource, parse_assistant_reply
+from .workspace import load_memory_context
 
 
 class CodexCancelledError(RuntimeError):
@@ -21,7 +23,8 @@ class CodexCancelledError(RuntimeError):
 @dataclass(slots=True)
 class CodexRunResult:
     thread_id: str
-    reply_text: str
+    reply: AssistantReply
+    raw_reply_text: str
     active_model: str | None
 
 
@@ -35,15 +38,22 @@ class CodexRunner:
         self._active_process: subprocess.Popen[bytes] | None = None
         self._cancelled_pids: set[int] = set()
 
-    def run(self, user_text: str) -> CodexRunResult:
-        state = self._load_state()
-        prompt = self._build_prompt(user_text)
+    def run(
+        self,
+        user_text: str,
+        *,
+        prefer_voice_reply: bool,
+        source: TurnSource,
+        persist_session: bool = True,
+    ) -> CodexRunResult:
+        state = self._load_state() if persist_session else {}
+        prompt = self._build_prompt(user_text, prefer_voice_reply=prefer_voice_reply, source=source)
 
         try:
             result = self._run_once(
                 prompt=prompt,
                 output_model=self.config.codex_model,
-                thread_id=state.get("thread_id"),
+                thread_id=state.get("thread_id") if persist_session else None,
             )
         except RuntimeError as error:
             fallback_model = self.config.codex_fallback_model
@@ -52,24 +62,31 @@ class CodexRunner:
             result = self._run_once(
                 prompt=prompt,
                 output_model=fallback_model,
-                thread_id=state.get("thread_id"),
+                thread_id=state.get("thread_id") if persist_session else None,
             )
 
-        thread_id, reply_text = self._parse_codex_output(
+        thread_id, raw_reply_text = self._parse_codex_output(
             result["stdout_text"],
             result["output_path"],
             stream_thread_id=str(result.get("stream_thread_id", "")),
             stream_reply_text=str(result.get("stream_reply_text", "")),
+            allow_state_fallback=persist_session,
         )
-        reply_text = _sanitize_spoken_reply(reply_text)
+        reply = parse_assistant_reply(raw_reply_text, prefer_voice_reply=prefer_voice_reply)
         active_model = result["active_model"]
-        self._save_state(
+        if persist_session:
+            self._save_state(
+                thread_id=thread_id,
+                active_model=active_model,
+                reply_text=reply.preview_text,
+                previous_state=state,
+            )
+        return CodexRunResult(
             thread_id=thread_id,
+            reply=reply,
+            raw_reply_text=raw_reply_text,
             active_model=active_model,
-            reply_text=reply_text,
-            previous_state=state,
         )
-        return CodexRunResult(thread_id=thread_id, reply_text=reply_text, active_model=active_model)
 
     def cancel_current(self) -> None:
         with self._lock:
@@ -90,6 +107,10 @@ class CodexRunner:
             "turn_count": str(state.get("turn_count", 0)),
             "resume_command": self._format_resume_command(thread_id),
         }
+
+    def reset_session(self) -> None:
+        self.cancel_current()
+        self.state_path.unlink(missing_ok=True)
 
     def _run_once(self, *, prompt: str, output_model: str | None, thread_id: str | None) -> dict[str, object]:
         with tempfile.NamedTemporaryFile("w+", encoding="utf-8", suffix=".txt", delete=False) as output_file:
@@ -247,18 +268,75 @@ class CodexRunner:
         command.extend(["resume", thread_id, "-C", self.config.codex_workspace])
         return subprocess.list2cmdline(command)
 
-    def _build_prompt(self, user_text: str) -> str:
-        return (
-            "你正在和电话另一头的老板沟通。\n"
-            "你的输出会被直接转成语音播报，所以只说老板真正需要听到的话。\n"
-            "要求：中文、简短、自然、像电话汇报；不要念代码、路径、命令、JSON、Markdown、思考过程或工具过程。\n"
+    def _build_prompt(self, user_text: str, *, prefer_voice_reply: bool, source: TurnSource) -> str:
+        source_line = {
+            TurnSource.VOICE: "这一轮输入来自电话语音转写。",
+            TurnSource.FEISHU: "这一轮输入来自飞书私聊消息。",
+            TurnSource.SCHEDULE: "这一轮输入来自定时任务触发，但这一轮仍使用共享主会话，要延续前文上下文。",
+        }[source]
+
+        memory_context = load_memory_context(self.config)
+        file_block = (
             "如果用户要求你调整语音助手自己的行为、音色、模式或确认词，你可以直接修改这些文件：\n"
             f"- 运行配置：{self.config.assistant_runtime_config_path}\n"
-            f"- 运行状态：{self.config.assistant_state_path}\n"
-            "如果这轮没有必要播报给老板，请只输出 [silence]。\n"
-            f"补充风格要求：{self.config.codex_reply_style_prompt}\n\n"
+            f"- 长期记忆：{self.config.assistant_memory_path}\n"
+            f"- 当日记忆目录：{self.config.assistant_daily_memory_dir}\n"
+        )
+        memory_block = self._build_memory_block(memory_context)
+        patrol_block = self._build_patrol_block(user_text)
+
+        if prefer_voice_reply:
+            return (
+                "你正在和电话另一头的用户沟通。\n"
+                "你的输出会被直接转成语音播报，所以只说用户真正需要听到的话。\n"
+                f"{source_line}\n"
+                "要求：中文、简短、自然、像电话汇报；不要念代码、路径、命令、JSON、Markdown、思考过程或工具过程。\n"
+                "具体的电话汇报习惯和定制化风格，遵循当前工作目录里的 AGENTS.md。\n"
+                f"{file_block}"
+                f"{memory_block}"
+                "如果这轮没有必要播报给用户，请只输出 [silence]。\n"
+                f"\n用户刚才说：{user_text.strip()}"
+            )
+
+        return (
+            "你正在飞书上和用户沟通。\n"
+            "你的输出会直接发送到飞书私聊，可以比电话模式更自由，但仍然只输出最终要发出去的内容。\n"
+            f"{source_line}\n"
+            "要求：中文、简洁、自然；不要输出思考过程、工具过程、命令输出或中间状态。\n"
+            "具体的飞书输出风格和巡检汇报重点，遵循当前工作目录里的 AGENTS.md。\n"
+            "短问题直接输出最终文本。\n"
+            "如果是巡检、状态、日报、汇总、对比、包含多段信息、需要展示进展/卡点/待决策，优先输出一个纯 JSON 对象，不要包 Markdown 代码块。\n"
+            "你可以使用三种结构化格式：\n"
+            "1. 直接输出飞书原生格式："
+            '{"msg_type":"text|post|interactive","content":{...},"preview_text":"简短预览"}\n'
+            "2. 输出 report_card："
+            '{"vb_type":"report_card","title":"标题","summary":"一句话结论","facts":[{"label":"主会话","value":"正常"}],"sections":[{"title":"Agent 进展","bullets":["alpha | Codex | 正在处理任务A | 进度 60%"]}],"blockers":["无"],"decisions":["无"],"next_steps":["继续观察"],"preview_text":"巡检：整体正常"}\n'
+            "3. 输出 table_card："
+            '{"vb_type":"table_card","title":"标题","summary":"一句话结论","columns":["Session","进程","当前任务","进展","卡点"],"rows":[["alpha","Codex","任务A","60%","无"]],"notes":["需要用户决策：无"],"preview_text":"巡检：整体正常"}\n'
+            "结构化消息优先服务于飞书可读性：标题短、结论前置、字段少而准；简单问题不要硬上卡片。\n"
+            f"{file_block}"
+            f"{memory_block}"
+            f"{patrol_block}"
+            "如果这轮不需要发任何消息，请只输出 [silence]。\n"
             f"用户刚才说：{user_text.strip()}"
         )
+
+    @staticmethod
+    def _build_memory_block(memory_context: dict[str, str]) -> str:
+        parts: list[str] = []
+        if memory_context.get("long_term"):
+            parts.append(f"长期记忆：\n{memory_context['long_term']}\n")
+        if memory_context.get("daily"):
+            parts.append(f"今日记忆：\n{memory_context['daily']}\n")
+        if not parts:
+            return ""
+        return "可参考这些本地记忆：\n" + "".join(parts)
+
+    def _build_patrol_block(self, user_text: str) -> str:
+        if not self._looks_like_patrol_request(user_text):
+            return ""
+
+        return "这是巡检 / 状态汇报类请求，具体的聚焦点和格式遵循当前工作目录里的 AGENTS.md。\n"
 
     def _parse_codex_output(
         self,
@@ -266,6 +344,7 @@ class CodexRunner:
         output_path: Path,
         stream_thread_id: str = "",
         stream_reply_text: str = "",
+        allow_state_fallback: bool = True,
     ) -> tuple[str, str]:
         thread_id = stream_thread_id.strip()
         reply_text = stream_reply_text.strip()
@@ -295,7 +374,7 @@ class CodexRunner:
                     if text:
                         reply_text = text
 
-        if not thread_id:
+        if not thread_id and allow_state_fallback:
             previous_state = self._load_state()
             thread_id = str(previous_state.get("thread_id", "")).strip()
         if not thread_id:
@@ -426,6 +505,24 @@ class CodexRunner:
         return thread_id, reply_text, task_complete
 
     @staticmethod
+    def _looks_like_patrol_request(user_text: str) -> bool:
+        text = user_text.strip().lower()
+        if not text:
+            return False
+        keywords = (
+            "巡检",
+            "查岗",
+            "状态",
+            "agent",
+            "告警",
+            "阻塞",
+            "日报",
+            "汇总",
+            "进展",
+        )
+        return any(keyword in text for keyword in keywords)
+
+    @staticmethod
     def _kill_process_tree(process: subprocess.Popen[bytes]) -> None:
         if process.poll() is not None:
             return
@@ -448,34 +545,3 @@ class CodexRunner:
                 process.kill()
             except Exception:  # noqa: BLE001
                 pass
-
-
-def _sanitize_spoken_reply(reply_text: str) -> str:
-    text = reply_text.strip()
-    if not text:
-        return text
-    if text.lower() in {"[silence]", "silence", "<silence>"}:
-        return ""
-
-    forbidden_prefixes = (
-        "thinking",
-        "tool call",
-        "tool output",
-        "command output",
-        "stderr",
-        "stdout",
-    )
-    lines = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        lower_line = line.lower()
-        if lower_line.startswith(forbidden_prefixes):
-            continue
-        if line.startswith("```") or line.startswith("<thinking") or line.startswith("</thinking"):
-            continue
-        lines.append(line)
-
-    cleaned = "\n".join(lines).strip()
-    return cleaned or text

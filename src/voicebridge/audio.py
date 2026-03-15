@@ -19,6 +19,7 @@ from .config import BridgeConfig, frame_rms
 class RecordedUtterance:
     wav_bytes: bytes
     duration_ms: int
+    end_reason: str
 
 
 class AudioDeviceResolver:
@@ -127,13 +128,15 @@ class VoiceCapture:
                 if not reached_silence and not reached_max:
                     continue
 
+                end_reason = "silence" if reached_silence else "max_duration"
                 utterance = RecordedUtterance(
                     wav_bytes=_pcm_to_wav(
                         b"".join(active_frames),
                         sample_rate=self.config.sample_rate,
                         channels=self.config.channels
                     ),
-                    duration_ms=total_ms
+                    duration_ms=total_ms,
+                    end_reason=end_reason,
                 )
                 on_utterance(utterance)
 

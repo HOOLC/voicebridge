@@ -23,7 +23,6 @@ class VolcengineAudioClient:
     def prepare_models(self) -> dict[str, str]:
         self._require_credentials()
         return {
-            "speech_provider": self.config.speech_provider,
             "volcengine_app_id": self.config.volcengine_app_id or "",
             "volcengine_asr_resource_id": self.config.volcengine_asr_resource_id,
             "volcengine_tts_speaker": self.config.volcengine_tts_speaker,
