@@ -126,6 +126,7 @@ FEISHU_USER_ID=...
 - `playback_device`
 - `codex_model`
 - `codex_timeout_seconds`
+- `codex_auto_compact_enabled`
 - `feishu_enabled`
 
 示例：
@@ -134,6 +135,9 @@ FEISHU_USER_ID=...
 codex_workspace: "./bridge-home"
 codex_command: "codex.cmd"
 codex_model: "gpt-5.3-codex-spark"
+codex_auto_compact_enabled: true
+codex_auto_compact_max_context_chars: 260000
+codex_auto_compact_buffer_chars: 120000
 
 feishu_enabled: true
 feishu_user_id_type: "user_id"
@@ -208,6 +212,13 @@ python .\main.py run
 python .\main.py session
 ```
 
+如果共享会话累计历史过长，系统会先自动生成一份续接摘要，再重开共享会话继续执行。默认同时看两条阈值：
+
+- `codex_auto_compact_max_context_chars - codex_auto_compact_buffer_chars`
+- `codex_auto_compact_turn_threshold`
+
+当前默认值比较保守，会故意留出更大的 buffer，避免在上下文已经顶满后才 compact。
+
 查看本地可选音色列表：
 
 ```powershell
@@ -237,6 +248,7 @@ python .\main.py reset-session
 - 电话输入转写会同步到飞书，并带前缀“这是电话输入：”
 - 电话只播放由语音输入触发的正式回复
 - 定时任务使用标准 5 段 cron 表达式，并与电话/飞书共享主会话
+- 共享 Codex 会话在累计历史过长时会自动 compact：先总结旧会话，再新开会话并注入摘要续接
 - `assistant-state.json` 只保存运行状态快照，不再承担配置镜像
 
 ## 重要文件

@@ -25,6 +25,11 @@ codex_fallback_model: "gpt-5"
 codex_use_yolo: true
 codex_session_state_file: ".voicebridge-session.json"
 codex_timeout_seconds: 600
+codex_auto_compact_enabled: true
+codex_auto_compact_max_context_chars: 260000
+codex_auto_compact_buffer_chars: 120000
+codex_auto_compact_turn_threshold: 24
+codex_auto_compact_summary_max_chars: 6000
 
 capture_device: "Voicemeeter Out B1"
 playback_device: "Voicemeeter AUX Input"

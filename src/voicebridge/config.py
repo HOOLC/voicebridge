@@ -145,6 +145,11 @@ class BridgeConfig(BaseModel):
     codex_no_proxy: str | None = None
     codex_session_state_file: str = ".voicebridge-session.json"
     codex_timeout_seconds: int = 600
+    codex_auto_compact_enabled: bool = True
+    codex_auto_compact_max_context_chars: int = Field(default=260_000, ge=20_000)
+    codex_auto_compact_buffer_chars: int = Field(default=120_000, ge=10_000)
+    codex_auto_compact_turn_threshold: int = Field(default=24, ge=1)
+    codex_auto_compact_summary_max_chars: int = Field(default=6_000, ge=500)
     extra_search_paths: list[str] = Field(default_factory=list)
 
     capture_device: str | int
@@ -239,6 +244,10 @@ class BridgeConfig(BaseModel):
     @property
     def scheduled_tasks(self) -> list[ScheduledTaskConfig]:
         return self.runtime.schedule.tasks
+
+    @property
+    def codex_auto_compact_trigger_chars(self) -> int:
+        return max(20_000, self.codex_auto_compact_max_context_chars - self.codex_auto_compact_buffer_chars)
 
 
 def load_config(path: str | Path | None = None) -> BridgeConfig:

@@ -277,7 +277,41 @@ def _repair_json_candidate(raw_text: str) -> str:
     repaired = re.sub(r"(\[\s*)\"\"\s*,", r"\1", repaired)
     repaired = re.sub(r",\s*\"\"\s*(\])", r"\1", repaired)
     repaired = re.sub(r"\[\s*,", "[", repaired)
+    for _ in range(8):
+        try:
+            json.loads(repaired)
+            break
+        except json.JSONDecodeError as error:
+            updated = _repair_json_from_error(repaired, error)
+            if not updated or updated == repaired:
+                break
+            repaired = updated
     return repaired.strip()
+
+
+def _repair_json_from_error(text: str, error: json.JSONDecodeError) -> str:
+    pos = max(0, min(error.pos, len(text)))
+    current = text[pos] if pos < len(text) else ""
+    previous = _previous_non_whitespace_char(text, pos)
+
+    if error.msg == "Expecting ',' delimiter":
+        if current == "}" and previous not in {"", ",", "{", "["}:
+            return text[:pos] + "]" + text[pos:]
+        if current == "]" and previous not in {"", ",", "{", "["}:
+            return text[:pos] + "}" + text[pos:]
+
+    if error.msg.startswith("Unterminated string"):
+        return text + '"'
+
+    return text
+
+
+def _previous_non_whitespace_char(text: str, pos: int) -> str:
+    for index in range(pos - 1, -1, -1):
+        char = text[index]
+        if not char.isspace():
+            return char
+    return ""
 
 
 def _build_report_card_message(payload: dict[str, Any]) -> FeishuMessage | None:

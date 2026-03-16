@@ -29,6 +29,14 @@ class CodexRunResult:
     active_model: str | None
 
 
+@dataclass(slots=True)
+class CompactSessionResult:
+    carryover_summary: str
+    compacted_at: str
+    reason: str
+    previous_thread_id: str
+
+
 class CodexRunner:
     def __init__(self, config: BridgeConfig):
         self.config = config
@@ -48,7 +56,16 @@ class CodexRunner:
         persist_session: bool = True,
     ) -> CodexRunResult:
         state = self._load_state() if persist_session else {}
-        prompt = self._build_prompt(user_text, prefer_voice_reply=prefer_voice_reply, source=source)
+        compact_result: CompactSessionResult | None = None
+        if persist_session:
+            state, compact_result = self._auto_compact_if_needed(state)
+
+        prompt = self._build_prompt(
+            user_text,
+            prefer_voice_reply=prefer_voice_reply,
+            source=source,
+            carryover_summary=compact_result.carryover_summary if compact_result else "",
+        )
 
         try:
             result = self._run_once(
@@ -80,7 +97,10 @@ class CodexRunner:
                 thread_id=thread_id,
                 active_model=active_model,
                 reply_text=reply.preview_text,
+                raw_reply_text=raw_reply_text,
+                input_chars=len(prompt),
                 previous_state=state,
+                compact_result=compact_result,
             )
         return CodexRunResult(
             thread_id=thread_id,
@@ -106,6 +126,11 @@ class CodexRunner:
             "active_model": str(state.get("active_model", "")).strip(),
             "updated_at": str(state.get("updated_at", "")).strip(),
             "turn_count": str(state.get("turn_count", 0)),
+            "estimated_history_chars": str(state.get("estimated_history_chars", 0)),
+            "compact_count": str(state.get("compact_count", 0)),
+            "last_compact_at": str(state.get("last_compact_at", "")).strip(),
+            "auto_compact_trigger_chars": str(self.config.codex_auto_compact_trigger_chars),
+            "auto_compact_turn_threshold": str(self.config.codex_auto_compact_turn_threshold),
             "resume_command": self._format_resume_command(thread_id),
         }
 
@@ -269,7 +294,14 @@ class CodexRunner:
         command.extend(["resume", thread_id, "-C", self.config.codex_workspace])
         return subprocess.list2cmdline(command)
 
-    def _build_prompt(self, user_text: str, *, prefer_voice_reply: bool, source: TurnSource) -> str:
+    def _build_prompt(
+        self,
+        user_text: str,
+        *,
+        prefer_voice_reply: bool,
+        source: TurnSource,
+        carryover_summary: str = "",
+    ) -> str:
         source_line = {
             TurnSource.VOICE: "这一轮输入来自电话语音转写。",
             TurnSource.FEISHU: "这一轮输入来自飞书私聊消息。",
@@ -285,7 +317,8 @@ class CodexRunner:
             f"- 当日记忆目录：{self.config.assistant_daily_memory_dir}\n"
         )
         memory_block = self._build_memory_block(memory_context)
-        patrol_block = self._build_patrol_block(user_text)
+        patrol_block = self._build_patrol_block(user_text, source=source)
+        carryover_block = self._build_carryover_block(carryover_summary)
 
         if prefer_voice_reply:
             return (
@@ -295,6 +328,7 @@ class CodexRunner:
                 "不要输出思考过程、工具过程、代码、路径、命令、JSON 或 Markdown。\n"
                 f"{file_block}"
                 f"{memory_block}"
+                f"{carryover_block}"
                 "如果这轮没有必要播报给用户，请只输出 [silence]。\n"
                 f"\n用户刚才说：{user_text.strip()}"
             )
@@ -307,6 +341,7 @@ class CodexRunner:
             "如果输出 JSON，不要包 Markdown 代码块。\n"
             f"{file_block}"
             f"{memory_block}"
+            f"{carryover_block}"
             f"{patrol_block}"
             "如果这轮不需要发任何消息，请只输出 [silence]。\n"
             f"用户刚才说：{user_text.strip()}"
@@ -323,16 +358,32 @@ class CodexRunner:
             return ""
         return "可参考这些本地记忆：\n" + "".join(parts)
 
-    def _build_patrol_block(self, user_text: str) -> str:
+    @staticmethod
+    def _build_carryover_block(carryover_summary: str) -> str:
+        summary = carryover_summary.strip()
+        if not summary:
+            return ""
+        return (
+            "下面是共享主会话在自动 compact 后保留下来的续接摘要。"
+            "它用于延续旧会话上下文；如果和当前工作目录文件、实时采样结果或用户本轮明确要求冲突，以新的信息为准。\n"
+            f"{summary}\n"
+        )
+
+    def _build_patrol_block(self, user_text: str, *, source: TurnSource) -> str:
         if not self._looks_like_patrol_request(user_text):
             return ""
+
+        format_rule = (
+            "这类请求默认输出 report_card JSON，按 session 分段汇报，不要退化成普通文本或 Markdown 表格。\n"
+            "定时任务触发的巡检也沿用这个口径，agent session 动作不需要为了定时发送改成表格。\n"
+            '默认 schema：{"vb_type":"report_card","title":"标题","summary":"一句话结论","facts":[{"label":"Session数","value":"3"}],"sections":[{"title":"4 | Claude | running","bullets":["当前任务：...","进展：...","卡点：无"]}],"blockers":["无"],"decisions":["无"],"next_steps":["继续观察"],"preview_text":"简短预览"}\n'
+            "只有在回测结果、年度绩效、任务队列这类天然适合矩阵展示的数据上，才改用 table_card。\n"
+        )
 
         return (
             "这是巡检 / 状态汇报类请求。\n"
             "查看和巡检本质上是同一类任务：都要总结 tmux session、QuantDev 仓库下的 channel.md 和 dashboard.md；区别只是巡检可以发督促，查看不发督促。\n"
-            "这类请求默认输出 report_card JSON，按 session 分段汇报，不要退化成普通文本或 Markdown 表格。\n"
-            '默认 schema：{"vb_type":"report_card","title":"标题","summary":"一句话结论","facts":[{"label":"Session数","value":"3"}],"sections":[{"title":"4 | Claude | running","bullets":["当前任务：...","进展：...","卡点：无"]}],"blockers":["无"],"decisions":["无"],"next_steps":["继续观察"],"preview_text":"简短预览"}\n'
-            "只有在回测结果、年度绩效、任务队列这类天然适合矩阵展示的数据上，才改用 table_card。\n"
+            f"{format_rule}"
             "巡检口径和汇报重点，优先遵循当前工作目录里的 AGENTS.md。\n"
             "必须先基于下面这份程序侧预采样结果作答，不要自己猜 session 数量，也不要拿旧上下文补出预采样里不存在的 session。\n"
             "如果预采样和历史上下文冲突，以预采样为准；如果信息不足，就明确写缺失项，不要脑补。\n"
@@ -663,9 +714,15 @@ class CodexRunner:
         thread_id: str,
         active_model: str | None,
         reply_text: str,
+        raw_reply_text: str,
+        input_chars: int,
         previous_state: dict[str, object],
+        compact_result: CompactSessionResult | None,
     ) -> None:
         turn_count = int(previous_state.get("turn_count", 0) or 0) + 1
+        estimated_history_chars = (
+            int(previous_state.get("estimated_history_chars", 0) or 0) + max(0, input_chars) + len(raw_reply_text)
+        )
         payload = {
             "thread_id": thread_id,
             "codex_workspace": self.config.codex_workspace,
@@ -673,9 +730,143 @@ class CodexRunner:
             "active_model": active_model,
             "updated_at": datetime.now().isoformat(timespec="seconds"),
             "turn_count": turn_count,
+            "estimated_history_chars": estimated_history_chars,
+            "compact_count": int(previous_state.get("compact_count", 0) or 0),
+            "last_compact_at": str(previous_state.get("last_compact_at", "")).strip(),
+            "last_compact_reason": str(previous_state.get("last_compact_reason", "")).strip(),
+            "last_compact_summary": str(previous_state.get("last_compact_summary", "")).strip(),
+            "previous_thread_id": str(previous_state.get("previous_thread_id", "")).strip(),
             "last_reply_preview": reply_text[:120],
         }
+        if compact_result is not None:
+            payload["last_compact_at"] = compact_result.compacted_at
+            payload["last_compact_reason"] = compact_result.reason
+            payload["last_compact_summary"] = compact_result.carryover_summary
+            payload["previous_thread_id"] = compact_result.previous_thread_id
         self.state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _auto_compact_if_needed(
+        self, previous_state: dict[str, object]
+    ) -> tuple[dict[str, object], CompactSessionResult | None]:
+        reason = self._get_auto_compact_reason(previous_state)
+        if reason is None:
+            return previous_state, None
+
+        previous_thread_id = str(previous_state.get("thread_id", "")).strip()
+        compacted_at = datetime.now().isoformat(timespec="seconds")
+        carryover_summary = ""
+
+        if previous_thread_id:
+            try:
+                result = self._run_once(
+                    prompt=self._build_compact_prompt(),
+                    output_model=str(previous_state.get("active_model") or self.config.codex_model or "").strip() or None,
+                    thread_id=previous_thread_id,
+                )
+                _, raw_summary = self._parse_codex_output(
+                    result["stdout_text"],
+                    result["output_path"],
+                    stream_thread_id=str(result.get("stream_thread_id", "")),
+                    stream_reply_text=str(result.get("stream_reply_text", "")),
+                    allow_state_fallback=True,
+                )
+                carryover_summary = self._sanitize_compact_summary(raw_summary)
+            except Exception:
+                carryover_summary = ""
+
+        if not carryover_summary:
+            carryover_summary = self._build_fallback_compact_summary(previous_state)
+
+        next_state = {
+            "compact_count": int(previous_state.get("compact_count", 0) or 0) + 1,
+            "last_compact_at": compacted_at,
+            "last_compact_reason": reason,
+            "last_compact_summary": carryover_summary,
+            "previous_thread_id": previous_thread_id,
+        }
+        return next_state, CompactSessionResult(
+            carryover_summary=carryover_summary,
+            compacted_at=compacted_at,
+            reason=reason,
+            previous_thread_id=previous_thread_id,
+        )
+
+    def _get_auto_compact_reason(self, previous_state: dict[str, object]) -> str | None:
+        if not self.config.codex_auto_compact_enabled:
+            return None
+        if not str(previous_state.get("thread_id", "")).strip():
+            return None
+
+        estimated_history_chars = int(previous_state.get("estimated_history_chars", 0) or 0)
+        turn_count = int(previous_state.get("turn_count", 0) or 0)
+        if estimated_history_chars >= self.config.codex_auto_compact_trigger_chars:
+            return f"estimated_history_chars>={self.config.codex_auto_compact_trigger_chars}"
+        if turn_count >= self.config.codex_auto_compact_turn_threshold:
+            return f"turn_count>={self.config.codex_auto_compact_turn_threshold}"
+        return None
+
+    def _build_compact_prompt(self) -> str:
+        return (
+            "你正在为共享主会话做自动 compact。"
+            "你的输出不是给用户看的，而是给下一段新会话做续接上下文。\n"
+            "只保留未来继续工作真正需要的信息，删掉寒暄、重复描述、完整日志、工具过程和无关细节。\n"
+            f"总长度控制在 {self.config.codex_auto_compact_summary_max_chars} 个字符以内。\n"
+            "输出纯文本，不要 Markdown 代码块，不要 JSON。\n"
+            "按下面结构输出；没有内容的项直接写“无”：\n"
+            "目标:\n"
+            "已完成:\n"
+            "进行中:\n"
+            "关键事实:\n"
+            "待办:\n"
+            "风险/注意:\n"
+        )
+
+    def _sanitize_compact_summary(self, raw_text: str) -> str:
+        text = raw_text.strip()
+        if not text:
+            return ""
+        if text.startswith("```") and text.endswith("```"):
+            lines = text.splitlines()
+            if len(lines) >= 3:
+                text = "\n".join(lines[1:-1]).strip()
+        lines = [line.rstrip() for line in text.splitlines()]
+        cleaned = "\n".join(line for line in lines if line.strip()).strip()
+        if len(cleaned) > self.config.codex_auto_compact_summary_max_chars:
+            cleaned = cleaned[: self.config.codex_auto_compact_summary_max_chars].rstrip()
+        return cleaned
+
+    def _build_fallback_compact_summary(self, previous_state: dict[str, object]) -> str:
+        previous_summary = str(previous_state.get("last_compact_summary", "")).strip()
+        last_reply_preview = str(previous_state.get("last_reply_preview", "")).strip()
+        lines = [
+            "目标:",
+            "- 沿用上一共享主会话的工作目标继续执行。",
+            "已完成:",
+            f"- 最近一次可见回复摘要：{last_reply_preview or '无'}",
+            "进行中:",
+            "- 自动 compact 时未能拿到完整总结，请结合当前工作目录文件和实时信息继续。",
+            "关键事实:",
+            f"- 上一线程 ID：{str(previous_state.get('thread_id', '')).strip() or '无'}",
+        ]
+        if previous_summary:
+            lines.extend(
+                [
+                    "待办:",
+                    "- 先参考上一轮 compact 摘要，再结合本轮用户输入续接。",
+                    "风险/注意:",
+                    f"- 上一轮 compact 摘要：{previous_summary[:800]}",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "待办:",
+                    "- 结合当前用户输入与本地文件重新建立上下文。",
+                    "风险/注意:",
+                    "- 自动 compact 的完整摘要生成失败，本轮上下文延续可能不完整。",
+                ]
+            )
+        return "\n".join(lines)
 
     def _build_env(self) -> dict[str, str]:
         env = dict(os.environ)
