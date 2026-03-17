@@ -124,6 +124,7 @@ FEISHU_USER_ID=...
 
 - `capture_device`
 - `playback_device`
+- `assistant_cli_provider`
 - `codex_model`
 - `codex_timeout_seconds`
 - `codex_auto_compact_enabled`
@@ -132,6 +133,8 @@ FEISHU_USER_ID=...
 示例：
 
 ```yaml
+assistant_cli_provider: "codex"
+kimi_command: "kimi.exe"
 codex_workspace: "./bridge-home"
 codex_command: "codex.cmd"
 codex_model: "gpt-5.3-codex-spark"
@@ -145,6 +148,8 @@ feishu_user_id_type: "user_id"
 capture_device: "Voicemeeter Out B1"
 playback_device: "Voicemeeter AUX Input"
 ```
+
+如果要切到 Kimi CLI，把 `assistant_cli_provider` 改成 `"kimi"` 即可；`codex_use_yolo: true` 会继续给两种 CLI 都加上 `--yolo`。
 
 然后先执行一次：
 
@@ -206,7 +211,7 @@ python .\main.py status
 python .\main.py run
 ```
 
-查看当前 Codex 会话：
+查看当前共享 CLI 会话：
 
 ```powershell
 python .\main.py session

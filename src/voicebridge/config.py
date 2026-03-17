@@ -4,7 +4,7 @@ import math
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
@@ -134,6 +134,9 @@ class BridgeConfig(BaseModel):
     feishu_user_id: str | None = None
     feishu_user_id_type: str = "user_id"
 
+    assistant_cli_provider: Literal["codex", "kimi"] = "codex"
+    kimi_command: str = "kimi.exe"
+    kimi_model: str | None = None
     codex_workspace: str = "./bridge-home"
     codex_command: str = "codex.cmd"
     codex_model: str | None = "gpt-5.3-codex-spark"
@@ -246,6 +249,30 @@ class BridgeConfig(BaseModel):
         return self.runtime.schedule.tasks
 
     @property
+    def agent_cli_provider(self) -> str:
+        return "kimi" if self.assistant_cli_provider == "kimi" else "codex"
+
+    @property
+    def agent_cli_command(self) -> str:
+        return self.kimi_command if self.agent_cli_provider == "kimi" else self.codex_command
+
+    @property
+    def agent_primary_model(self) -> str | None:
+        if self.agent_cli_provider == "kimi":
+            return self.kimi_model
+        return self.codex_model
+
+    @property
+    def agent_fallback_model(self) -> str | None:
+        if self.agent_cli_provider == "kimi":
+            return None
+        return self.codex_fallback_model
+
+    @property
+    def agent_cli_name(self) -> str:
+        return "Kimi CLI" if self.agent_cli_provider == "kimi" else "Codex CLI"
+
+    @property
     def codex_auto_compact_trigger_chars(self) -> int:
         return max(20_000, self.codex_auto_compact_max_context_chars - self.codex_auto_compact_buffer_chars)
 
@@ -299,7 +326,10 @@ def load_config(path: str | Path | None = None) -> BridgeConfig:
             "assistant_daily_memory_example_dir": str(
                 _resolve_local_path(config_path, config.assistant_daily_memory_example_dir)
             ),
+            "kimi_command": _expand_env_vars(config.kimi_command),
+            "kimi_model": _expand_env_vars(config.kimi_model) if config.kimi_model else None,
             "codex_workspace": str(_resolve_local_path(config_path, config.codex_workspace)),
+            "codex_command": _expand_env_vars(config.codex_command),
             "codex_session_state_file": str(_resolve_local_path(config_path, config.codex_session_state_file)),
             "extra_search_paths": [_expand_env_vars(item) for item in config.extra_search_paths],
             "codex_http_proxy": _expand_env_vars(config.codex_http_proxy) if config.codex_http_proxy else None,

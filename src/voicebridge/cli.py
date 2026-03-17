@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -92,8 +93,11 @@ def cmd_status(args: argparse.Namespace) -> None:
     print()
 
     print("[state]")
+    print(f"cli_provider={session.get('cli_provider', config.agent_cli_provider)}")
+    print(f"cli_command={session.get('cli_command', config.agent_cli_command)}")
     print(f"thread_id={session.get('thread_id', '')}")
     print(f"active_model={session.get('active_model', '')}")
+    print(f"resume_command={session.get('resume_command', '')}")
     print(f"turn_count={session.get('turn_count', '')}")
     print(f"queue_depth={runtime.get('queue_depth', 0)}")
     print(f"codex_busy={runtime.get('codex_busy', False)}")
@@ -139,8 +143,9 @@ def cmd_check(args: argparse.Namespace) -> None:
         feishu_ok = bool(config.feishu_app_id and config.feishu_app_secret and config.feishu_user_id)
     results.append(("credentials.feishu", feishu_ok, "feishu_enabled requires app_id/app_secret/user_id"))
 
-    codex_ok = bool(str(config.codex_command).strip())
-    results.append(("codex.command", codex_ok, str(config.codex_command)))
+    cli_command = str(config.agent_cli_command).strip()
+    cli_ok = bool(cli_command and (Path(cli_command).exists() or shutil.which(cli_command)))
+    results.append((f"{config.agent_cli_provider}.command", cli_ok, cli_command))
 
     for name, ok, detail in results:
         status = "ok" if ok else "fail"

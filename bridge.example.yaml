@@ -18,6 +18,8 @@ feishu_app_secret:
 feishu_user_id:
 feishu_user_id_type: "user_id"
 
+assistant_cli_provider: "codex"
+kimi_command: "kimi.exe"
 codex_workspace: "./bridge-home"
 codex_command: "codex.cmd"
 codex_model: "gpt-5.3-codex-spark"

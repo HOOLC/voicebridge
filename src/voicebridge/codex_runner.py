@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -38,6 +39,8 @@ class CompactSessionResult:
 
 
 class CodexRunner:
+    _KIMI_SHARED_SESSION_ID = "__KIMI_CONTINUE__"
+
     def __init__(self, config: BridgeConfig):
         self.config = config
         self.state_path = Path(config.codex_session_state_file)
@@ -70,11 +73,11 @@ class CodexRunner:
         try:
             result = self._run_once(
                 prompt=prompt,
-                output_model=self.config.codex_model,
+                output_model=self.config.agent_primary_model,
                 thread_id=state.get("thread_id") if persist_session else None,
             )
         except RuntimeError as error:
-            fallback_model = self.config.codex_fallback_model
+            fallback_model = self.config.agent_fallback_model
             if not fallback_model or not self._is_unsupported_model_error(str(error), str(error)):
                 raise
             result = self._run_once(
@@ -96,6 +99,7 @@ class CodexRunner:
             self._save_state(
                 thread_id=thread_id,
                 active_model=active_model,
+                requested_model=self.config.agent_primary_model,
                 reply_text=reply.preview_text,
                 raw_reply_text=raw_reply_text,
                 input_chars=len(prompt),
@@ -122,13 +126,15 @@ class CodexRunner:
         thread_id = str(state.get("thread_id", "")).strip()
         return {
             "thread_id": thread_id,
-            "requested_model": str(state.get("requested_model", "")).strip(),
-            "active_model": str(state.get("active_model", "")).strip(),
-            "updated_at": str(state.get("updated_at", "")).strip(),
+            "cli_provider": self._stringify_state_value(state.get("cli_provider", self.config.agent_cli_provider)),
+            "cli_command": self._stringify_state_value(state.get("cli_command", self.config.agent_cli_command)),
+            "requested_model": self._stringify_state_value(state.get("requested_model", "")),
+            "active_model": self._stringify_state_value(state.get("active_model", "")),
+            "updated_at": self._stringify_state_value(state.get("updated_at", "")),
             "turn_count": str(state.get("turn_count", 0)),
             "estimated_history_chars": str(state.get("estimated_history_chars", 0)),
             "compact_count": str(state.get("compact_count", 0)),
-            "last_compact_at": str(state.get("last_compact_at", "")).strip(),
+            "last_compact_at": self._stringify_state_value(state.get("last_compact_at", "")),
             "auto_compact_trigger_chars": str(self.config.codex_auto_compact_trigger_chars),
             "auto_compact_turn_threshold": str(self.config.codex_auto_compact_turn_threshold),
             "resume_command": self._format_resume_command(thread_id),
@@ -139,6 +145,7 @@ class CodexRunner:
         self.state_path.unlink(missing_ok=True)
 
     def _run_once(self, *, prompt: str, output_model: str | None, thread_id: str | None) -> dict[str, object]:
+        prompt = self._sanitize_prompt_for_cli(prompt)
         with tempfile.NamedTemporaryFile("w+", encoding="utf-8", suffix=".txt", delete=False) as output_file:
             output_path = Path(output_file.name)
 
@@ -212,7 +219,7 @@ class CodexRunner:
 
                 if time.monotonic() - start_time > self.config.codex_timeout_seconds:
                     self._kill_process_tree(process)
-                    raise RuntimeError(f"Codex exec 超时，{self.config.codex_timeout_seconds} 秒内没有完成")
+                    raise RuntimeError(f"{self.config.agent_cli_name} 超时，{self.config.codex_timeout_seconds} 秒内没有完成")
 
             if saw_task_complete and process.poll() is None:
                 try:
@@ -251,7 +258,28 @@ class CodexRunner:
         }
 
     def _build_command(self, *, prompt: str, output_path: Path, thread_id: str | None, model: str | None) -> list[str]:
-        command = [self.config.codex_command, "exec", "-C", self.config.codex_workspace]
+        cli_command = self._resolve_agent_cli_command()
+        if self.config.agent_cli_provider == "kimi":
+            command = [
+                cli_command,
+                "--print",
+                "--output-format",
+                "text",
+                "--final-message-only",
+                "--input-format",
+                "text",
+                "-w",
+                self.config.codex_workspace,
+            ]
+            if self.config.codex_use_yolo:
+                command.append("--yolo")
+            if model:
+                command.extend(["-m", model])
+            if thread_id:
+                command.append("--continue")
+            return command
+
+        command = [cli_command, "exec", "-C", self.config.codex_workspace]
 
         if self.config.codex_use_yolo:
             command.append("--yolo")
@@ -288,11 +316,39 @@ class CodexRunner:
         if not thread_id:
             return ""
 
-        command = ["codex"]
+        command = [self._resolve_agent_cli_command()]
+        if self.config.agent_cli_provider == "kimi":
+            if self.config.codex_use_yolo:
+                command.append("--yolo")
+            command.extend(["--continue", "-w", self.config.codex_workspace])
+            return subprocess.list2cmdline(command)
+
         if self.config.codex_use_yolo:
             command.append("--yolo")
         command.extend(["resume", thread_id, "-C", self.config.codex_workspace])
         return subprocess.list2cmdline(command)
+
+    def _resolve_agent_cli_command(self) -> str:
+        configured = str(self.config.agent_cli_command).strip()
+        if configured and (Path(configured).exists() or shutil.which(configured)):
+            return configured
+
+        candidates: list[str] = []
+        if configured:
+            candidates.append(configured)
+        if self.config.agent_cli_provider == "kimi":
+            candidates.extend(["kimi.exe", "kimi"])
+        else:
+            candidates.extend(["codex.cmd", "codex", "codex.exe"])
+
+        seen: set[str] = set()
+        for candidate in candidates:
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            if Path(candidate).exists() or shutil.which(candidate):
+                return candidate
+        return configured
 
     def _build_prompt(
         self,
@@ -317,7 +373,8 @@ class CodexRunner:
             f"- 当日记忆目录：{self.config.assistant_daily_memory_dir}\n"
         )
         memory_block = self._build_memory_block(memory_context)
-        patrol_block = self._build_patrol_block(user_text, source=source)
+        rebalance_daily_block = self._build_rebalance_daily_block(user_text)
+        patrol_block = "" if rebalance_daily_block else self._build_patrol_block(user_text, source=source)
         carryover_block = self._build_carryover_block(carryover_summary)
 
         if prefer_voice_reply:
@@ -342,6 +399,7 @@ class CodexRunner:
             f"{file_block}"
             f"{memory_block}"
             f"{carryover_block}"
+            f"{rebalance_daily_block}"
             f"{patrol_block}"
             "如果这轮不需要发任何消息，请只输出 [silence]。\n"
             f"用户刚才说：{user_text.strip()}"
@@ -389,6 +447,25 @@ class CodexRunner:
             "如果预采样和历史上下文冲突，以预采样为准；如果信息不足，就明确写缺失项，不要脑补。\n"
             f"{self._collect_patrol_context()}"
             f"{self._collect_collab_context()}"
+        )
+
+    def _build_rebalance_daily_block(self, user_text: str) -> str:
+        if not self._looks_like_rebalance_daily_request(user_text):
+            return ""
+
+        return (
+            "这是调仓日报 / 线上流水线检查类请求，不是 agent 巡检。\n"
+            "不要把它写成 tmux session 巡检，也不要把重点放在 agent 是否 idle。\n"
+            "默认输出 report_card JSON，不要退化成普通文本；如果需要展示 top3 股票和分数，可以把它们放进 facts 或单独 section。\n"
+            '默认 schema：{"vb_type":"report_card","title":"调仓日报","summary":"一句话结论","facts":[{"label":"QMT","value":"success"}],"sections":[{"title":"线上流水线","bullets":["online：成功","offline：失败，原因：...","QMT：失败，原因：..."]}],"blockers":["无"],"decisions":["无"],"next_steps":["无"],"preview_text":"简短预览"}\n'
+            "结论里必须明确给出：符合预期 / 部分符合预期 / 不符合预期。\n"
+            "判断必须基于代码约束和实际产物，不能只复述日志。\n"
+            "重点看今天的线上调仓闭环：\n"
+            "- Windows F:/Quant/Quant 下的 QMT watcher / daily loop\n"
+            "- WSL ~/Quant 下 Columbina 的 offline / online 流水线\n"
+            "- ~/QuantFS/prod/online/prediction.pack 的更新时间、最新日期、top3 股票和 score\n"
+            "如果 QMT 调仓窗口内 prediction 未及时覆盖目标 trade_day，而 prediction 文件在更晚时间才生成，要明确判定为不符合预期，并指出是生成滞后导致调仓窗口错过。\n"
+            f"{self._collect_rebalance_daily_context()}"
         )
 
     def _collect_patrol_context(self) -> str:
@@ -505,6 +582,91 @@ class CodexRunner:
             "- dashboard.md（前 160 行）:",
             dashboard_result["output"] if dashboard_result["output"] and dashboard_result["output"] != "__MISSING__" else "(missing)",
         ]
+        return "\n".join(lines) + "\n"
+
+    def _collect_rebalance_daily_context(self) -> str:
+        timestamp = datetime.now().isoformat(timespec="seconds")
+        today = datetime.now().date().isoformat()
+        lines = [
+            "程序侧调仓日报预采样：",
+            f"- 采样时间：{timestamp}",
+            "- 代码约束摘要：",
+            "- Columbina: offline 计划工作日 16:00，online 计划工作日 14:50；可用命令包括 status --daily / health / analyze",
+            "- QMT watcher: 窗口 14:50~15:00；等待 prediction 覆盖目标 trade_day；若超时未覆盖，应判为不符合预期",
+        ]
+
+        columbina_daily = self._run_preflight_command(
+            ["wsl", "bash", "-lc", f"cd ~/Quant && uv run main.py columbina status --daily --date {today}"],
+            timeout=30,
+        )
+        columbina_health = self._run_preflight_command(
+            ["wsl", "bash", "-lc", "cd ~/Quant && uv run main.py columbina health --limit 10 --detail"],
+            timeout=30,
+        )
+        cron_online = self._run_preflight_command(
+            ["wsl", "bash", "-lc", "tail -n 120 ~/Quant/logs/cron_online.log"],
+            timeout=20,
+        )
+        cron_offline = self._run_preflight_command(
+            ["wsl", "bash", "-lc", "tail -n 120 ~/Quant/logs/cron_offline.log"],
+            timeout=20,
+        )
+        qmt_watch = self._run_preflight_command(
+            ["wsl", "bash", "-lc", f"if [ -f ~/QuantFS/prod/loop/qmt_prediction_watch/{today}.jsonl ]; then tail -n 120 ~/QuantFS/prod/loop/qmt_prediction_watch/{today}.jsonl; else echo '__MISSING__'; fi"],
+            timeout=20,
+        )
+        qmt_trade = self._run_preflight_command(
+            ["wsl", "bash", "-lc", f"if [ -f ~/QuantFS/prod/loop/trading_loop_log/{today}.jsonl ]; then tail -n 120 ~/QuantFS/prod/loop/trading_loop_log/{today}.jsonl; else echo '__MISSING__'; fi"],
+            timeout=20,
+        )
+        prediction_snapshot = self._run_preflight_command(
+            [
+                "wsl",
+                "bash",
+                "-lc",
+                "cd ~/Quant && uv run python - <<'PY'\n"
+                "from pathlib import Path\n"
+                "from datetime import datetime\n"
+                "import polars as pl\n"
+                "pack = Path('/home/overlogged/QuantFS/prod/online/prediction.pack')\n"
+                "pred = pack / 'prediction.parquet'\n"
+                "manifest = pack / 'manifest.json'\n"
+                "if not pred.exists():\n"
+                "    print('prediction_exists=False')\n"
+                "else:\n"
+                "    print('prediction_exists=True')\n"
+                "    print('prediction_mtime=' + datetime.fromtimestamp(pred.stat().st_mtime).isoformat(sep=' '))\n"
+                "if manifest.exists():\n"
+                "    print('manifest_mtime=' + datetime.fromtimestamp(manifest.stat().st_mtime).isoformat(sep=' '))\n"
+                "if pred.exists():\n"
+                "    df = pl.read_parquet(pred).select(['date','symbol','score']).sort(['date','score'], descending=[False, True])\n"
+                "    latest_date = df['date'].max()\n"
+                "    print('latest_date=' + str(latest_date))\n"
+                "    for row in df.filter(pl.col('date') == latest_date).head(3).iter_rows(named=True):\n"
+                "        print('top3=' + str(row))\n"
+                "PY",
+            ],
+            timeout=30,
+        )
+
+        lines.extend(
+            [
+                "- Columbina 日报：",
+                columbina_daily["output"] or "(missing)",
+                "- Columbina 健康度：",
+                columbina_health["output"] or "(missing)",
+                "- cron_online.log（尾部）:",
+                cron_online["output"] or "(missing)",
+                "- cron_offline.log（尾部）:",
+                cron_offline["output"] or "(missing)",
+                f"- QMT watcher 审计（{today}）:",
+                qmt_watch["output"] if qmt_watch["output"] and qmt_watch["output"] != "__MISSING__" else "(missing)",
+                f"- QMT trading loop 审计（{today}）:",
+                qmt_trade["output"] if qmt_trade["output"] and qmt_trade["output"] != "__MISSING__" else "(missing)",
+                "- 在线 prediction 产物：",
+                prediction_snapshot["output"] or "(missing)",
+            ]
+        )
         return "\n".join(lines) + "\n"
 
     @staticmethod
@@ -666,6 +828,15 @@ class CodexRunner:
         stream_reply_text: str = "",
         allow_state_fallback: bool = True,
     ) -> tuple[str, str]:
+        if self.config.agent_cli_provider == "kimi":
+            return self._parse_kimi_output(
+                stdout_text,
+                output_path,
+                stream_thread_id=stream_thread_id,
+                stream_reply_text=stream_reply_text,
+                allow_state_fallback=allow_state_fallback,
+            )
+
         thread_id = stream_thread_id.strip()
         reply_text = stream_reply_text.strip()
         if output_path.exists():
@@ -703,16 +874,44 @@ class CodexRunner:
             raise RuntimeError("Codex did not return a final reply")
         return thread_id, reply_text
 
+    def _parse_kimi_output(
+        self,
+        stdout_text: str,
+        output_path: Path,
+        stream_thread_id: str = "",
+        stream_reply_text: str = "",
+        allow_state_fallback: bool = True,
+    ) -> tuple[str, str]:
+        reply_text = stream_reply_text.strip() or stdout_text.strip()
+        output_path.unlink(missing_ok=True)
+
+        thread_id = stream_thread_id.strip()
+        if not thread_id and allow_state_fallback:
+            previous_state = self._load_state()
+            thread_id = str(previous_state.get("thread_id", "")).strip()
+        if not thread_id:
+            thread_id = self._KIMI_SHARED_SESSION_ID
+        if not reply_text:
+            raise RuntimeError("Kimi did not return a final reply")
+        return thread_id, reply_text
+
     def _load_state(self) -> dict[str, object]:
         if not self.state_path.exists():
             return {}
-        return json.loads(self.state_path.read_text(encoding="utf-8"))
+        state = json.loads(self.state_path.read_text(encoding="utf-8"))
+        if not isinstance(state, dict):
+            return {}
+        cli_provider = str(state.get("cli_provider") or "codex").strip().lower() or "codex"
+        if cli_provider != self.config.agent_cli_provider:
+            return {}
+        return state
 
     def _save_state(
         self,
         *,
         thread_id: str,
         active_model: str | None,
+        requested_model: str | None,
         reply_text: str,
         raw_reply_text: str,
         input_chars: int,
@@ -725,8 +924,10 @@ class CodexRunner:
         )
         payload = {
             "thread_id": thread_id,
+            "cli_provider": self.config.agent_cli_provider,
+            "cli_command": self.config.agent_cli_command,
             "codex_workspace": self.config.codex_workspace,
-            "requested_model": self.config.codex_model,
+            "requested_model": requested_model,
             "active_model": active_model,
             "updated_at": datetime.now().isoformat(timespec="seconds"),
             "turn_count": turn_count,
@@ -760,7 +961,7 @@ class CodexRunner:
             try:
                 result = self._run_once(
                     prompt=self._build_compact_prompt(),
-                    output_model=str(previous_state.get("active_model") or self.config.codex_model or "").strip() or None,
+                    output_model=str(previous_state.get("active_model") or self.config.agent_primary_model or "").strip() or None,
                     thread_id=previous_thread_id,
                 )
                 _, raw_summary = self._parse_codex_output(
@@ -883,7 +1084,22 @@ class CodexRunner:
         for key, value in proxy_pairs.items():
             if value:
                 env[key] = value
+        if self.config.agent_cli_provider == "kimi":
+            env["PYTHONUTF8"] = "1"
+            env["PYTHONIOENCODING"] = "utf-8"
         return env
+
+    @staticmethod
+    def _stringify_state_value(value: object) -> str:
+        if value in (None, ""):
+            return ""
+        return str(value).strip()
+
+    @staticmethod
+    def _sanitize_prompt_for_cli(prompt: str) -> str:
+        if not prompt:
+            return ""
+        return prompt.encode("utf-8", errors="replace").decode("utf-8")
 
     @staticmethod
     def _write_prompt_to_stdin(process: subprocess.Popen[bytes], prompt: str) -> None:
@@ -940,6 +1156,8 @@ class CodexRunner:
             item = json.loads(raw_line)
         except json.JSONDecodeError:
             return thread_id, reply_text, task_complete
+        if not isinstance(item, dict):
+            return thread_id, reply_text, task_complete
 
         item_type = str(item.get("type", "")).strip()
         if item_type == "thread.started":
@@ -969,6 +1187,8 @@ class CodexRunner:
         text = user_text.strip().lower()
         if not text:
             return False
+        if CodexRunner._looks_like_rebalance_daily_request(text):
+            return False
         keywords = (
             "/boss",
             "boss",
@@ -982,6 +1202,25 @@ class CodexRunner:
             "日报",
             "汇总",
             "进展",
+        )
+        return any(keyword in text for keyword in keywords)
+
+    @staticmethod
+    def _looks_like_rebalance_daily_request(user_text: str) -> bool:
+        text = user_text.strip().lower()
+        if not text:
+            return False
+        keywords = (
+            "调仓日报",
+            "调仓",
+            "流水线",
+            "qmt",
+            "prediction",
+            "predictions",
+            "prediction.pack",
+            "线上流水线",
+            "在线流水线",
+            "columbina",
         )
         return any(keyword in text for keyword in keywords)
 

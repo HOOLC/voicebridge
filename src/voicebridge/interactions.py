@@ -277,6 +277,7 @@ def _repair_json_candidate(raw_text: str) -> str:
     repaired = re.sub(r"(\[\s*)\"\"\s*,", r"\1", repaired)
     repaired = re.sub(r",\s*\"\"\s*(\])", r"\1", repaired)
     repaired = re.sub(r"\[\s*,", "[", repaired)
+    repaired = _escape_control_chars_inside_json_strings(repaired)
     for _ in range(8):
         try:
             json.loads(repaired)
@@ -312,6 +313,51 @@ def _previous_non_whitespace_char(text: str, pos: int) -> str:
         if not char.isspace():
             return char
     return ""
+
+
+def _escape_control_chars_inside_json_strings(text: str) -> str:
+    if not text:
+        return text
+
+    parts: list[str] = []
+    in_string = False
+    escaped = False
+
+    for char in text:
+        if in_string:
+            if escaped:
+                parts.append(char)
+                escaped = False
+                continue
+            if char == "\\":
+                parts.append(char)
+                escaped = True
+                continue
+            if char == '"':
+                parts.append(char)
+                in_string = False
+                continue
+            if char == "\n":
+                parts.append("\\n")
+                continue
+            if char == "\r":
+                parts.append("\\r")
+                continue
+            if char == "\t":
+                parts.append("\\t")
+                continue
+            if ord(char) < 0x20:
+                parts.append(f"\\u{ord(char):04x}")
+                continue
+            parts.append(char)
+            continue
+
+        parts.append(char)
+        if char == '"':
+            in_string = True
+            escaped = False
+
+    return "".join(parts)
 
 
 def _build_report_card_message(payload: dict[str, Any]) -> FeishuMessage | None:
