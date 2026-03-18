@@ -144,6 +144,54 @@ class CodexRunner:
         self.cancel_current()
         self.state_path.unlink(missing_ok=True)
 
+    def build_background_command(
+        self,
+        *,
+        workspace: str,
+        model: str | None = None,
+        use_yolo: bool | None = None,
+        cli_provider: str = "configured",
+    ) -> list[str]:
+        provider = self.config.agent_cli_provider if cli_provider == "configured" else cli_provider
+        cli_command = self._resolve_cli_command(provider)
+        should_use_yolo = self.config.codex_use_yolo if use_yolo is None else use_yolo
+        active_model = model if model is not None else self._default_model_for_provider(provider)
+
+        if provider == "kimi":
+            command = [
+                cli_command,
+                "--print",
+                "--output-format",
+                "text",
+                "--final-message-only",
+                "--input-format",
+                "text",
+                "-w",
+                workspace,
+            ]
+            if should_use_yolo:
+                command.append("--yolo")
+            if active_model:
+                command.extend(["-m", active_model])
+            return command
+
+        command = [cli_command, "exec", "-C", workspace]
+        if should_use_yolo:
+            command.append("--yolo")
+        command.extend(["--skip-git-repo-check", "--add-dir", self.config.project_root])
+        for extra_path in self.config.extra_search_paths:
+            if str(extra_path).strip():
+                command.extend(["--add-dir", str(extra_path).strip()])
+        if not should_use_yolo:
+            command.append("--dangerously-bypass-approvals-and-sandbox")
+        if active_model:
+            command.extend(["-m", active_model])
+        command.append("-")
+        return command
+
+    def build_process_env(self) -> dict[str, str]:
+        return self._build_env()
+
     def _run_once(self, *, prompt: str, output_model: str | None, thread_id: str | None) -> dict[str, object]:
         prompt = self._sanitize_prompt_for_cli(prompt)
         with tempfile.NamedTemporaryFile("w+", encoding="utf-8", suffix=".txt", delete=False) as output_file:
@@ -329,14 +377,17 @@ class CodexRunner:
         return subprocess.list2cmdline(command)
 
     def _resolve_agent_cli_command(self) -> str:
-        configured = str(self.config.agent_cli_command).strip()
+        return self._resolve_cli_command(self.config.agent_cli_provider)
+
+    def _resolve_cli_command(self, provider: str) -> str:
+        configured = str(self._configured_command_for_provider(provider)).strip()
         if configured and (Path(configured).exists() or shutil.which(configured)):
             return configured
 
         candidates: list[str] = []
         if configured:
             candidates.append(configured)
-        if self.config.agent_cli_provider == "kimi":
+        if provider == "kimi":
             candidates.extend(["kimi.exe", "kimi"])
         else:
             candidates.extend(["codex.cmd", "codex", "codex.exe"])
@@ -349,6 +400,16 @@ class CodexRunner:
             if Path(candidate).exists() or shutil.which(candidate):
                 return candidate
         return configured
+
+    def _configured_command_for_provider(self, provider: str) -> str:
+        if provider == "kimi":
+            return self.config.kimi_command
+        return self.config.codex_command
+
+    def _default_model_for_provider(self, provider: str) -> str | None:
+        if provider == "kimi":
+            return self.config.kimi_model
+        return self.config.codex_model
 
     def _build_prompt(
         self,
@@ -373,8 +434,7 @@ class CodexRunner:
             f"- 当日记忆目录：{self.config.assistant_daily_memory_dir}\n"
         )
         memory_block = self._build_memory_block(memory_context)
-        rebalance_daily_block = self._build_rebalance_daily_block(user_text)
-        patrol_block = "" if rebalance_daily_block else self._build_patrol_block(user_text, source=source)
+        patrol_block = self._build_patrol_block(user_text, source=source)
         carryover_block = self._build_carryover_block(carryover_summary)
 
         if prefer_voice_reply:
@@ -399,7 +459,6 @@ class CodexRunner:
             f"{file_block}"
             f"{memory_block}"
             f"{carryover_block}"
-            f"{rebalance_daily_block}"
             f"{patrol_block}"
             "如果这轮不需要发任何消息，请只输出 [silence]。\n"
             f"用户刚才说：{user_text.strip()}"
@@ -435,37 +494,17 @@ class CodexRunner:
             "这类请求默认输出 report_card JSON，按 session 分段汇报，不要退化成普通文本或 Markdown 表格。\n"
             "定时任务触发的巡检也沿用这个口径，agent session 动作不需要为了定时发送改成表格。\n"
             '默认 schema：{"vb_type":"report_card","title":"标题","summary":"一句话结论","facts":[{"label":"Session数","value":"3"}],"sections":[{"title":"4 | Claude | running","bullets":["当前任务：...","进展：...","卡点：无"]}],"blockers":["无"],"decisions":["无"],"next_steps":["继续观察"],"preview_text":"简短预览"}\n'
-            "只有在回测结果、年度绩效、任务队列这类天然适合矩阵展示的数据上，才改用 table_card。\n"
+            "只有在多列对比、任务队列这类天然适合矩阵展示的数据上，才改用 table_card。\n"
         )
 
         return (
             "这是巡检 / 状态汇报类请求。\n"
-            "查看和巡检本质上是同一类任务：都要总结 tmux session、QuantDev 仓库下的 channel.md 和 dashboard.md；区别只是巡检可以发督促，查看不发督促。\n"
+            "查看和巡检本质上是同一类任务：都要总结 tmux session 和当前工作目录里的相关上下文；区别只是巡检可以发督促，查看不发督促。\n"
             f"{format_rule}"
             "巡检口径和汇报重点，优先遵循当前工作目录里的 AGENTS.md。\n"
             "必须先基于下面这份程序侧预采样结果作答，不要自己猜 session 数量，也不要拿旧上下文补出预采样里不存在的 session。\n"
             "如果预采样和历史上下文冲突，以预采样为准；如果信息不足，就明确写缺失项，不要脑补。\n"
             f"{self._collect_patrol_context()}"
-            f"{self._collect_collab_context()}"
-        )
-
-    def _build_rebalance_daily_block(self, user_text: str) -> str:
-        if not self._looks_like_rebalance_daily_request(user_text):
-            return ""
-
-        return (
-            "这是调仓日报 / 线上流水线检查类请求，不是 agent 巡检。\n"
-            "不要把它写成 tmux session 巡检，也不要把重点放在 agent 是否 idle。\n"
-            "默认输出 report_card JSON，不要退化成普通文本；如果需要展示 top3 股票和分数，可以把它们放进 facts 或单独 section。\n"
-            '默认 schema：{"vb_type":"report_card","title":"调仓日报","summary":"一句话结论","facts":[{"label":"QMT","value":"success"}],"sections":[{"title":"线上流水线","bullets":["online：成功","offline：失败，原因：...","QMT：失败，原因：..."]}],"blockers":["无"],"decisions":["无"],"next_steps":["无"],"preview_text":"简短预览"}\n'
-            "结论里必须明确给出：符合预期 / 部分符合预期 / 不符合预期。\n"
-            "判断必须基于代码约束和实际产物，不能只复述日志。\n"
-            "重点看今天的线上调仓闭环：\n"
-            "- Windows F:/Quant/Quant 下的 QMT watcher / daily loop\n"
-            "- WSL ~/Quant 下 Columbina 的 offline / online 流水线\n"
-            "- ~/QuantFS/prod/online/prediction.pack 的更新时间、最新日期、top3 股票和 score\n"
-            "如果 QMT 调仓窗口内 prediction 未及时覆盖目标 trade_day，而 prediction 文件在更晚时间才生成，要明确判定为不符合预期，并指出是生成滞后导致调仓窗口错过。\n"
-            f"{self._collect_rebalance_daily_context()}"
         )
 
     def _collect_patrol_context(self) -> str:
@@ -551,122 +590,6 @@ class CodexRunner:
             lines.append("snapshot_last_20:")
             lines.append(snap2 or "(capture failed)")
 
-        return "\n".join(lines) + "\n"
-
-    def _collect_collab_context(self) -> str:
-        timestamp = datetime.now().isoformat(timespec="seconds")
-        channel_result = self._run_preflight_command(
-            [
-                "wsl",
-                "bash",
-                "-lc",
-                "if [ -f ~/QuantDev/lab/collab/channel.md ]; then tail -n 120 ~/QuantDev/lab/collab/channel.md; else echo '__MISSING__'; fi",
-            ],
-            timeout=10,
-        )
-        dashboard_result = self._run_preflight_command(
-            [
-                "wsl",
-                "bash",
-                "-lc",
-                "if [ -f ~/QuantDev/lab/collab/dashboard.md ]; then sed -n '1,160p' ~/QuantDev/lab/collab/dashboard.md; else echo '__MISSING__'; fi",
-            ],
-            timeout=10,
-        )
-
-        lines = [
-            "程序侧协作文件摘录：",
-            f"- 采样时间：{timestamp}",
-            "- channel.md（最近 120 行）:",
-            channel_result["output"] if channel_result["output"] and channel_result["output"] != "__MISSING__" else "(missing)",
-            "- dashboard.md（前 160 行）:",
-            dashboard_result["output"] if dashboard_result["output"] and dashboard_result["output"] != "__MISSING__" else "(missing)",
-        ]
-        return "\n".join(lines) + "\n"
-
-    def _collect_rebalance_daily_context(self) -> str:
-        timestamp = datetime.now().isoformat(timespec="seconds")
-        today = datetime.now().date().isoformat()
-        lines = [
-            "程序侧调仓日报预采样：",
-            f"- 采样时间：{timestamp}",
-            "- 代码约束摘要：",
-            "- Columbina: offline 计划工作日 16:00，online 计划工作日 14:50；可用命令包括 status --daily / health / analyze",
-            "- QMT watcher: 窗口 14:50~15:00；等待 prediction 覆盖目标 trade_day；若超时未覆盖，应判为不符合预期",
-        ]
-
-        columbina_daily = self._run_preflight_command(
-            ["wsl", "bash", "-lc", f"cd ~/Quant && uv run main.py columbina status --daily --date {today}"],
-            timeout=30,
-        )
-        columbina_health = self._run_preflight_command(
-            ["wsl", "bash", "-lc", "cd ~/Quant && uv run main.py columbina health --limit 10 --detail"],
-            timeout=30,
-        )
-        cron_online = self._run_preflight_command(
-            ["wsl", "bash", "-lc", "tail -n 120 ~/Quant/logs/cron_online.log"],
-            timeout=20,
-        )
-        cron_offline = self._run_preflight_command(
-            ["wsl", "bash", "-lc", "tail -n 120 ~/Quant/logs/cron_offline.log"],
-            timeout=20,
-        )
-        qmt_watch = self._run_preflight_command(
-            ["wsl", "bash", "-lc", f"if [ -f ~/QuantFS/prod/loop/qmt_prediction_watch/{today}.jsonl ]; then tail -n 120 ~/QuantFS/prod/loop/qmt_prediction_watch/{today}.jsonl; else echo '__MISSING__'; fi"],
-            timeout=20,
-        )
-        qmt_trade = self._run_preflight_command(
-            ["wsl", "bash", "-lc", f"if [ -f ~/QuantFS/prod/loop/trading_loop_log/{today}.jsonl ]; then tail -n 120 ~/QuantFS/prod/loop/trading_loop_log/{today}.jsonl; else echo '__MISSING__'; fi"],
-            timeout=20,
-        )
-        prediction_snapshot = self._run_preflight_command(
-            [
-                "wsl",
-                "bash",
-                "-lc",
-                "cd ~/Quant && uv run python - <<'PY'\n"
-                "from pathlib import Path\n"
-                "from datetime import datetime\n"
-                "import polars as pl\n"
-                "pack = Path('/home/overlogged/QuantFS/prod/online/prediction.pack')\n"
-                "pred = pack / 'prediction.parquet'\n"
-                "manifest = pack / 'manifest.json'\n"
-                "if not pred.exists():\n"
-                "    print('prediction_exists=False')\n"
-                "else:\n"
-                "    print('prediction_exists=True')\n"
-                "    print('prediction_mtime=' + datetime.fromtimestamp(pred.stat().st_mtime).isoformat(sep=' '))\n"
-                "if manifest.exists():\n"
-                "    print('manifest_mtime=' + datetime.fromtimestamp(manifest.stat().st_mtime).isoformat(sep=' '))\n"
-                "if pred.exists():\n"
-                "    df = pl.read_parquet(pred).select(['date','symbol','score']).sort(['date','score'], descending=[False, True])\n"
-                "    latest_date = df['date'].max()\n"
-                "    print('latest_date=' + str(latest_date))\n"
-                "    for row in df.filter(pl.col('date') == latest_date).head(3).iter_rows(named=True):\n"
-                "        print('top3=' + str(row))\n"
-                "PY",
-            ],
-            timeout=30,
-        )
-
-        lines.extend(
-            [
-                "- Columbina 日报：",
-                columbina_daily["output"] or "(missing)",
-                "- Columbina 健康度：",
-                columbina_health["output"] or "(missing)",
-                "- cron_online.log（尾部）:",
-                cron_online["output"] or "(missing)",
-                "- cron_offline.log（尾部）:",
-                cron_offline["output"] or "(missing)",
-                f"- QMT watcher 审计（{today}）:",
-                qmt_watch["output"] if qmt_watch["output"] and qmt_watch["output"] != "__MISSING__" else "(missing)",
-                f"- QMT trading loop 审计（{today}）:",
-                qmt_trade["output"] if qmt_trade["output"] and qmt_trade["output"] != "__MISSING__" else "(missing)",
-                "- 在线 prediction 产物：",
-                prediction_snapshot["output"] or "(missing)",
-            ]
-        )
         return "\n".join(lines) + "\n"
 
     @staticmethod
@@ -1187,8 +1110,6 @@ class CodexRunner:
         text = user_text.strip().lower()
         if not text:
             return False
-        if CodexRunner._looks_like_rebalance_daily_request(text):
-            return False
         keywords = (
             "/boss",
             "boss",
@@ -1202,25 +1123,6 @@ class CodexRunner:
             "日报",
             "汇总",
             "进展",
-        )
-        return any(keyword in text for keyword in keywords)
-
-    @staticmethod
-    def _looks_like_rebalance_daily_request(user_text: str) -> bool:
-        text = user_text.strip().lower()
-        if not text:
-            return False
-        keywords = (
-            "调仓日报",
-            "调仓",
-            "流水线",
-            "qmt",
-            "prediction",
-            "predictions",
-            "prediction.pack",
-            "线上流水线",
-            "在线流水线",
-            "columbina",
         )
         return any(keyword in text for keyword in keywords)
 

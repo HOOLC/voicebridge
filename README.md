@@ -169,6 +169,41 @@ python .\main.py check
 
 本地可选音色列表放在 `bridge-home/tts-voices.yaml`。`voice.tts_speaker` 可以直接填 speaker id，也可以填这个列表里的名称或别名。
 
+`schedule.tasks` 现在支持两种执行方式：
+
+- `type: "agent"`：和原来一样，把 `prompt` 投进共享主会话
+- `type: "background_process"`：直接在指定 `cwd` 里拉起后台进程，不占用共享主会话
+
+示例：
+
+```yaml
+schedule:
+  check_interval_seconds: 15
+  tasks:
+    - name: "巡检"
+      cron: "*/30 * * * *"
+      type: "agent"
+      prompt: "/boss 巡检"
+      enabled: true
+    - name: "独立工作区检查"
+      cron: "0 * * * *"
+      type: "background_process"
+      cwd: "F:\\Lab\\other-workspace"
+      use_agent_cli: true
+      cli_provider: "configured"
+      prompt: "检查当前工作区状态并输出简短摘要"
+      enabled: false
+```
+
+`background_process` 任务支持这些字段：
+
+- `cwd`：工作目录；相对路径按 `assistant-runtime.yaml` 所在目录解析
+- `command` + `args`：直接启动指定后台命令
+- `stdin`：启动后写入标准输入，适合 `codex exec -` 这类命令
+- `use_agent_cli: true`：直接启动 CLI 一次性执行，不走共享主会话
+- `cli_provider`：`configured` / `codex` / `kimi`，默认跟随安装配置
+- `use_yolo`：覆盖机器级 `codex_use_yolo`
+
 ## 音频链路
 
 当前推荐 `Voicemeeter Banana`。
@@ -252,7 +287,7 @@ python .\main.py reset-session
 - 飞书只接收指定用户的私聊文本消息
 - 电话输入转写会同步到飞书，并带前缀“这是电话输入：”
 - 电话只播放由语音输入触发的正式回复
-- 定时任务使用标准 5 段 cron 表达式，并与电话/飞书共享主会话
+- 定时任务使用标准 5 段 cron 表达式；`agent` 任务共享主会话，`background_process` 任务直接启动后台进程
 - 共享 Codex 会话在累计历史过长时会自动 compact：先总结旧会话，再新开会话并注入摘要续接
 - `assistant-state.json` 只保存运行状态快照，不再承担配置镜像
 
