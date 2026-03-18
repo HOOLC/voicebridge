@@ -2,24 +2,18 @@ from __future__ import annotations
 
 import calendar
 import threading
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
 
+from .config import ScheduledTaskConfig
 from .workspace import RuntimeConfigManager
-
-
-@dataclass(slots=True)
-class TriggeredTask:
-    name: str
-    prompt: str
 
 
 class CronTaskScheduler:
     def __init__(
         self,
         config_manager: RuntimeConfigManager,
-        on_trigger: Callable[[TriggeredTask], None],
+        on_trigger: Callable[[ScheduledTaskConfig], None],
         log: Callable[[str, str], None],
     ):
         self._config_manager = config_manager
@@ -69,7 +63,7 @@ class CronTaskScheduler:
                 continue
             self._last_triggered[task_key] = minute_key
             self._log("定时", f"触发任务：{task.name}")
-            self._on_trigger(TriggeredTask(name=task.name, prompt=task.prompt))
+            self._on_trigger(task)
 
 
 def _cron_matches(expression: str, now: datetime) -> bool:

@@ -45,4 +45,3 @@ commands:
 
 schedule:
   check_interval_seconds: 15
-  tasks: []

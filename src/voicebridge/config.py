@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 DEFAULT_CONFIG_PATH = Path("bridge.yaml")
@@ -19,8 +19,32 @@ class ScheduledTaskConfig(BaseModel):
 
     name: str
     cron: str
-    prompt: str
+    type: Literal["agent", "background_process"] = "agent"
+    prompt: str = ""
+    cwd: str | None = None
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
+    stdin: str = ""
+    use_agent_cli: bool = False
+    cli_provider: Literal["configured", "codex", "kimi"] = "configured"
+    use_yolo: bool | None = None
     enabled: bool = True
+
+    @model_validator(mode="after")
+    def validate_task_payload(self) -> "ScheduledTaskConfig":
+        if self.type == "agent":
+            if not self.prompt.strip():
+                raise ValueError("agent scheduled task requires a non-empty prompt")
+            return self
+
+        if self.use_agent_cli:
+            if not self.prompt.strip():
+                raise ValueError("background_process task with use_agent_cli=true requires a non-empty prompt")
+            return self
+
+        if not str(self.command or "").strip():
+            raise ValueError("background_process task requires command or use_agent_cli=true")
+        return self
 
 
 class VoiceRuntimeConfig(BaseModel):
@@ -309,7 +333,7 @@ def load_config(path: str | Path | None = None) -> BridgeConfig:
 
     runtime_data = _load_yaml_object(runtime_path, runtime_example_path)
     voice_catalog = _load_voice_catalog_file(catalog_path, catalog_example_path)
-    runtime_payload = _build_runtime_payload(runtime_data, voice_catalog)
+    runtime_payload = _build_runtime_payload(runtime_data, voice_catalog, runtime_path)
     config = BridgeConfig.model_validate({**data, "runtime": runtime_payload})
     return config.model_copy(
         update={
@@ -394,7 +418,11 @@ def _apply_env_defaults(data: dict[str, Any]) -> None:
             data[key] = value
 
 
-def _build_runtime_payload(runtime_data: dict[str, Any], voice_catalog: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_runtime_payload(
+    runtime_data: dict[str, Any],
+    voice_catalog: list[dict[str, Any]],
+    runtime_config_path: Path,
+) -> dict[str, Any]:
     voice_data = runtime_data.get("voice") if isinstance(runtime_data.get("voice"), dict) else {}
     ack_data = runtime_data.get("ack") if isinstance(runtime_data.get("ack"), dict) else {}
     interaction_data = runtime_data.get("interaction") if isinstance(runtime_data.get("interaction"), dict) else {}
@@ -491,7 +519,7 @@ def _build_runtime_payload(runtime_data: dict[str, Any], voice_catalog: list[dic
                 schedule_data.get("check_interval_seconds"),
                 ScheduleRuntimeConfig.model_fields["check_interval_seconds"].default,
             ),
-            "tasks": _normalize_tasks(schedule_data.get("tasks")),
+            "tasks": _normalize_tasks(schedule_data.get("tasks"), runtime_config_path=runtime_config_path),
         },
     }
     return AssistantRuntimeConfig.model_validate(runtime_payload).model_dump(mode="python")
@@ -548,11 +576,25 @@ def _load_voice_catalog_file(catalog_path: Path, example_path: Path) -> list[dic
     return []
 
 
-def _normalize_tasks(runtime_tasks: Any) -> list[dict[str, Any]]:
+def _normalize_tasks(runtime_tasks: Any, *, runtime_config_path: Path) -> list[dict[str, Any]]:
     if not isinstance(runtime_tasks, list):
         return []
-    normalized = [item for item in runtime_tasks if isinstance(item, dict)]
-    return [ScheduledTaskConfig.model_validate(item).model_dump(mode="python") for item in normalized]
+    normalized: list[dict[str, Any]] = []
+    for item in runtime_tasks:
+        if not isinstance(item, dict):
+            continue
+        payload = dict(item)
+        cwd = payload.get("cwd")
+        if cwd not in (None, ""):
+            payload["cwd"] = str(_resolve_local_path(runtime_config_path, str(cwd)))
+        command = payload.get("command")
+        if command not in (None, ""):
+            payload["command"] = _expand_env_vars(str(command))
+        args = payload.get("args")
+        if isinstance(args, list):
+            payload["args"] = [_expand_env_vars(str(arg)) for arg in args]
+        normalized.append(ScheduledTaskConfig.model_validate(payload).model_dump(mode="python"))
+    return normalized
 
 
 def _normalize_string_list(value: Any) -> list[str]:

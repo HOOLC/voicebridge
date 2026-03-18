@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import random
 import re
+import subprocess
 import threading
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 from .audio import AudioPlayer, RecordedUtterance, VoiceCapture
 from .codex_runner import CodexCancelledError, CodexRunner
-from .config import BridgeConfig
-from .cron_scheduler import CronTaskScheduler, TriggeredTask
+from .config import BridgeConfig, ScheduledTaskConfig
+from .cron_scheduler import CronTaskScheduler
 from .feishu_bridge import FeishuBridge
 from .interactions import BridgeTurn, FeishuMessage, OutputChannel, SessionScope, TurnSource, build_text_feishu_message
 from .runtime_store import AssistantRuntimeStore
@@ -198,7 +201,11 @@ class BridgeRuntime:
         )
         self.store.set_queue_depth(self._queue.qsize())
 
-    def _handle_scheduled_task(self, task: TriggeredTask) -> None:
+    def _handle_scheduled_task(self, task: ScheduledTaskConfig) -> None:
+        if task.type == "background_process":
+            self._launch_background_process_task(task)
+            return
+
         clean_prompt = task.prompt.strip()
         if not clean_prompt:
             return
@@ -216,6 +223,46 @@ class BridgeRuntime:
             )
         )
         self.store.set_queue_depth(self._queue.qsize())
+
+    def _launch_background_process_task(self, task: ScheduledTaskConfig) -> None:
+        self._refresh_config()
+        try:
+            command, cwd, env, stdin_text = self._build_background_process_payload(task)
+            process = _spawn_background_process(command, cwd=cwd, env=env, stdin_text=stdin_text)
+        except Exception as error:  # noqa: BLE001
+            self.store.record_error(f"定时后台任务启动失败：{task.name}: {error}")
+            self._log("定时", f"后台任务启动失败：{task.name}：{error}")
+            return
+
+        command_preview = subprocess.list2cmdline(command)
+        self._log("定时", f"后台任务已启动：{task.name} pid={process.pid} cwd={cwd} cmd={command_preview}")
+
+    def _build_background_process_payload(
+        self,
+        task: ScheduledTaskConfig,
+    ) -> tuple[list[str], str, dict[str, str], str]:
+        cwd = str(task.cwd or self.config.project_root).strip() or self.config.project_root
+        cwd_path = Path(cwd)
+        if not cwd_path.exists():
+            raise FileNotFoundError(f"工作目录不存在：{cwd_path}")
+        if not cwd_path.is_dir():
+            raise NotADirectoryError(f"工作目录不是目录：{cwd_path}")
+
+        if task.use_agent_cli:
+            prompt = task.prompt.strip()
+            command = self.codex.build_background_command(
+                workspace=str(cwd_path),
+                model=None,
+                use_yolo=task.use_yolo,
+                cli_provider=task.cli_provider,
+            )
+            return command, str(cwd_path), self.codex.build_process_env(), prompt
+
+        executable = str(task.command or "").strip()
+        if not executable:
+            raise ValueError("缺少 command")
+        args = [str(item) for item in task.args]
+        return [executable, *args], str(cwd_path), self.codex.build_process_env(), str(task.stdin or "")
 
     def _worker_loop(self) -> None:
         while True:
@@ -434,3 +481,46 @@ class BridgeRuntime:
 
 def _normalize_text(text: str) -> str:
     return re.sub(r"[\s，。！？、,.!?：:；;“”\"'（）()\-]+", "", text).lower()
+
+
+def _spawn_background_process(
+    command: list[str],
+    *,
+    cwd: str,
+    env: dict[str, str],
+    stdin_text: str,
+) -> subprocess.Popen[str]:
+    popen_kwargs: dict[str, object] = {
+        "cwd": cwd,
+        "env": env,
+        "stdin": subprocess.PIPE if stdin_text else subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "close_fds": True,
+    }
+
+    if os.name == "nt":
+        creationflags = 0
+        for flag_name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
+            creationflags |= int(getattr(subprocess, flag_name, 0))
+        if creationflags:
+            popen_kwargs["creationflags"] = creationflags
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    process = subprocess.Popen(command, **popen_kwargs)
+    if stdin_text and process.stdin is not None:
+        try:
+            process.stdin.write(stdin_text)
+            process.stdin.close()
+        except BrokenPipeError:
+            pass
+        except Exception:  # noqa: BLE001
+            try:
+                process.stdin.close()
+            except Exception:  # noqa: BLE001
+                pass
+    return process
