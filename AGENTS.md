@@ -14,7 +14,6 @@
 - 源码：`src/voicebridge/`
 - 主静态配置：`bridge.yaml`
 - 运行时目录：`bridge-home/`
-- 运行时模板：`bridge-home.example/`
 - 文档：`README.md`
 
 ## 配置分层
@@ -69,9 +68,10 @@
 - 改 Python 源码后，至少执行一次：
   - `python -m compileall src main.py`
 - 如果改了运行链路，优先补一轮最小冒烟验证。
-- 如果改了配置结构：
+- 如果改了安装级配置结构：
   - 同步更新 `bridge.example.yaml`
-  - 同步更新 `bridge-home.example/assistant-runtime.yaml`
+- 如果改了运行目录首次生成的默认内容：
+  - 同步更新 `src/voicebridge/runtime_defaults.py`
   - 同步更新 `README.md`
 
 ## 飞书相关约定

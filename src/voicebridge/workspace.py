@@ -7,6 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from .config import BridgeConfig, load_config
+from .runtime_defaults import (
+    DEFAULT_AGENTS_MD,
+    DEFAULT_ASSISTANT_RUNTIME_YAML,
+    DEFAULT_MEMORY_MD,
+    DEFAULT_TTS_VOICES_YAML,
+)
+
 
 class RuntimeConfigManager:
     def __init__(self, config: BridgeConfig):
@@ -29,12 +36,10 @@ def ensure_runtime_workspace(config: BridgeConfig) -> None:
     workspace_dir = Path(config.codex_workspace)
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
-    _copy_if_missing(Path(config.assistant_runtime_example_path), Path(config.assistant_runtime_config_path))
-    _copy_if_missing(Path(config.assistant_voice_catalog_example_path), Path(config.assistant_voice_catalog_path))
-    _copy_if_missing(Path(config.assistant_memory_example_path), Path(config.assistant_memory_path))
-
-    _copy_tree_if_missing(Path(config.assistant_daily_memory_example_dir), Path(config.assistant_daily_memory_dir))
-
+    _write_text_if_missing(Path(config.assistant_runtime_config_path), DEFAULT_ASSISTANT_RUNTIME_YAML)
+    _write_text_if_missing(Path(config.assistant_voice_catalog_path), DEFAULT_TTS_VOICES_YAML)
+    _write_text_if_missing(Path(config.assistant_memory_path), DEFAULT_MEMORY_MD)
+    _write_text_if_missing(workspace_dir / "AGENTS.md", DEFAULT_AGENTS_MD)
     Path(config.assistant_state_path).parent.mkdir(parents=True, exist_ok=True)
     Path(config.assistant_daily_memory_dir).mkdir(parents=True, exist_ok=True)
 
@@ -63,27 +68,13 @@ def load_memory_context(config: BridgeConfig, *, max_chars_per_file: int = 4000)
         "long_term": long_term,
         "daily": today,
     }
-def _copy_if_missing(example_path: Path, target_path: Path) -> None:
+
+
+def _write_text_if_missing(target_path: Path, content: str) -> None:
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    if target_path.exists() or not example_path.exists():
+    if target_path.exists():
         return
-    target_path.write_text(example_path.read_text(encoding="utf-8"), encoding="utf-8")
-
-
-def _copy_tree_if_missing(example_dir: Path, target_dir: Path) -> None:
-    target_dir.mkdir(parents=True, exist_ok=True)
-    if not example_dir.exists():
-        return
-    for source in example_dir.rglob("*"):
-        relative = source.relative_to(example_dir)
-        destination = target_dir / relative
-        if source.is_dir():
-            destination.mkdir(parents=True, exist_ok=True)
-            continue
-        if destination.exists():
-            continue
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    target_path.write_text(content, encoding="utf-8")
 
 
 def _read_text(path: Path, *, max_chars: int) -> str:

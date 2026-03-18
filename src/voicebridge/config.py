@@ -10,6 +10,8 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .runtime_defaults import load_default_runtime_data, load_default_voice_catalog
+
 
 DEFAULT_CONFIG_PATH = Path("bridge.yaml")
 
@@ -51,10 +53,10 @@ class VoiceRuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tts_resource_id: str = "seed-tts-2.0"
-    tts_speaker: str = "zh_female_roumeinvyou_emo_v2_mars_bigtts"
+    tts_speaker: str = "zh_female_vv_uranus_bigtts"
     format: str = "wav"
     sample_rate: int = 24_000
-    speed_ratio: float = 1.0
+    speed_ratio: float = 1.05
     volume_ratio: float = 1.0
     pitch_ratio: float = 1.0
 
@@ -62,7 +64,7 @@ class VoiceRuntimeConfig(BaseModel):
 class AckRuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    default: str = "收到"
+    default: str = "收到啦"
     variants: list[str] = Field(
         default_factory=lambda: [
             "收到啦",
@@ -139,6 +141,7 @@ class BridgeConfig(BaseModel):
     config_path: str = "bridge.yaml"
 
     assistant_runtime_config_path: str = "./bridge-home/assistant-runtime.yaml"
+    # Legacy compatibility fields. Runtime bootstrap no longer reads template directories.
     assistant_runtime_example_path: str = "./bridge-home.example/assistant-runtime.yaml"
     assistant_voice_catalog_path: str = "./bridge-home/tts-voices.yaml"
     assistant_voice_catalog_example_path: str = "./bridge-home.example/tts-voices.yaml"
@@ -315,13 +318,13 @@ def load_config(path: str | Path | None = None) -> BridgeConfig:
         config_path,
         str(data.get("assistant_runtime_config_path") or BridgeConfig.model_fields["assistant_runtime_config_path"].default),
     )
-    runtime_example_path = _resolve_local_path(
-        config_path,
-        str(data.get("assistant_runtime_example_path") or BridgeConfig.model_fields["assistant_runtime_example_path"].default),
-    )
     catalog_path = _resolve_local_path(
         config_path,
         str(data.get("assistant_voice_catalog_path") or BridgeConfig.model_fields["assistant_voice_catalog_path"].default),
+    )
+    runtime_example_path = _resolve_local_path(
+        config_path,
+        str(data.get("assistant_runtime_example_path") or BridgeConfig.model_fields["assistant_runtime_example_path"].default),
     )
     catalog_example_path = _resolve_local_path(
         config_path,
@@ -331,8 +334,8 @@ def load_config(path: str | Path | None = None) -> BridgeConfig:
         ),
     )
 
-    runtime_data = _load_yaml_object(runtime_path, runtime_example_path)
-    voice_catalog = _load_voice_catalog_file(catalog_path, catalog_example_path)
+    runtime_data = _merge_yaml_object(load_default_runtime_data(), _load_yaml_object(runtime_path))
+    voice_catalog = _load_voice_catalog_file(catalog_path) or load_default_voice_catalog()
     runtime_payload = _build_runtime_payload(runtime_data, voice_catalog, runtime_path)
     config = BridgeConfig.model_validate({**data, "runtime": runtime_payload})
     return config.model_copy(
@@ -374,10 +377,7 @@ def dump_device(device: dict[str, Any], index: int) -> str:
 
 
 def load_voice_catalog(config: BridgeConfig) -> list[dict[str, Any]]:
-    return _load_voice_catalog_file(
-        Path(config.assistant_voice_catalog_path),
-        Path(config.assistant_voice_catalog_example_path),
-    )
+    return _load_voice_catalog_file(Path(config.assistant_voice_catalog_path)) or load_default_voice_catalog()
 
 
 def _resolve_local_path(config_path: Path, raw_path: str) -> Path:
@@ -525,54 +525,63 @@ def _build_runtime_payload(
     return AssistantRuntimeConfig.model_validate(runtime_payload).model_dump(mode="python")
 
 
-def _load_yaml_object(primary_path: Path, fallback_path: Path) -> dict[str, Any]:
-    for candidate_path in (primary_path, fallback_path):
-        if not candidate_path.exists():
-            continue
-        try:
-            payload = yaml.safe_load(candidate_path.read_text(encoding="utf-8")) or {}
-        except Exception:  # noqa: BLE001
-            continue
-        if isinstance(payload, dict):
-            return payload
+def _load_yaml_object(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+    if isinstance(payload, dict):
+        return payload
     return {}
 
 
-def _load_voice_catalog_file(catalog_path: Path, example_path: Path) -> list[dict[str, Any]]:
-    for candidate_path in (catalog_path, example_path):
-        if not candidate_path.exists():
+def _merge_yaml_object(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _merge_yaml_object(current, value)
             continue
-        try:
-            payload = yaml.safe_load(candidate_path.read_text(encoding="utf-8")) or {}
-        except Exception:  # noqa: BLE001
-            continue
-        if not isinstance(payload, dict):
-            continue
-        voices = payload.get("voices")
-        if not isinstance(voices, list):
-            continue
+        merged[key] = value
+    return merged
 
-        normalized: list[dict[str, Any]] = []
-        for item in voices:
-            if not isinstance(item, dict):
-                continue
-            voice_id = str(item.get("id", "")).strip()
-            if not voice_id:
-                continue
-            aliases = item.get("aliases")
-            alias_list = []
-            if isinstance(aliases, list):
-                alias_list = [str(alias).strip() for alias in aliases if str(alias).strip()]
-            normalized.append(
-                {
-                    "id": voice_id,
-                    "name": str(item.get("name") or voice_id).strip(),
-                    "aliases": alias_list,
-                    "description": str(item.get("description") or "").strip(),
-                }
-            )
-        if normalized:
-            return normalized
+
+def _load_voice_catalog_file(catalog_path: Path) -> list[dict[str, Any]]:
+    if not catalog_path.exists():
+        return []
+    try:
+        payload = yaml.safe_load(catalog_path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        return []
+    if not isinstance(payload, dict):
+        return []
+    voices = payload.get("voices")
+    if not isinstance(voices, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for item in voices:
+        if not isinstance(item, dict):
+            continue
+        voice_id = str(item.get("id", "")).strip()
+        if not voice_id:
+            continue
+        aliases = item.get("aliases")
+        alias_list = []
+        if isinstance(aliases, list):
+            alias_list = [str(alias).strip() for alias in aliases if str(alias).strip()]
+        normalized.append(
+            {
+                "id": voice_id,
+                "name": str(item.get("name") or voice_id).strip(),
+                "aliases": alias_list,
+                "description": str(item.get("description") or "").strip(),
+            }
+        )
+    if normalized:
+        return normalized
     return []
 
 

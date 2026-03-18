@@ -33,10 +33,9 @@ VoiceBridge 是一个本地运行的 AI 语音桥接项目。
 - 入口文件：`main.py`
 - 主配置：`bridge.yaml`
 - 运行目录：`bridge-home/`
-- 运行目录模板：`bridge-home.example/`
 - Python 源码：`src/voicebridge/`
 
-`bridge-home/` 是真实运行目录，首次执行 `status`、`check`、`run` 等命令时，会从 `bridge-home.example/` 自动补齐缺失文件。
+`bridge-home/` 是真实运行目录，并且默认不纳入 Git，适合放每台机器自己的助手行为配置、个人定时任务和本地记忆。首次执行 `status`、`check`、`run` 等命令时，如果这些运行文件缺失，程序会直接用代码内嵌默认值补齐 `bridge-home/`。
 
 ## 配置分层
 
@@ -59,6 +58,8 @@ VoiceBridge 是一个本地运行的 AI 语音桥接项目。
 - 打断和识别阈值
 - 口头控制词
 - 定时任务
+
+这里适合放你自己的本地任务和个性化助手行为；仓库不再保留单独模板目录，避免和正式工作目录混淆。
 
 更细的回复口径、飞书格式偏好、巡检汇报规则，统一放在 `bridge-home/AGENTS.md`。
 
@@ -101,7 +102,7 @@ Copy-Item .\.env.example .\.env
 
 如果你已经在系统环境变量里配置了这些值，可以不创建 `.env`。
 
-安装阶段不需要手动复制 `bridge-home/`、`bridge-home.example/` 或 `bridge-home/assistant-runtime.yaml`。如果这些运行目录和文件缺失，执行 `python .\main.py run`、`python .\main.py status` 或 `python .\main.py session` 时会自动从模板补齐。
+安装阶段不需要手动复制 `bridge-home/` 或 `bridge-home/assistant-runtime.yaml`。如果这些运行目录和文件缺失，执行 `python .\main.py run`、`python .\main.py status` 或 `python .\main.py session` 时，程序会自动补齐运行目录。
 
 `.env` 里常见的是：
 
@@ -157,7 +158,7 @@ playback_device: "Voicemeeter AUX Input"
 python .\main.py check
 ```
 
-这会自动补齐 `bridge-home/assistant-runtime.yaml`、`bridge-home/MEMORY.md`、`bridge-home/memory/` 等运行目录文件。
+这会自动补齐 `bridge-home/assistant-runtime.yaml`、`bridge-home/MEMORY.md`、`bridge-home/AGENTS.md`、`bridge-home/memory/` 等运行目录文件。
 
 再按需要修改 `bridge-home/assistant-runtime.yaml`。当前推荐结构：
 

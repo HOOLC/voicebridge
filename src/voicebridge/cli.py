@@ -67,8 +67,7 @@ def cmd_devices(_args: argparse.Namespace) -> None:
 
 
 def cmd_status(args: argparse.Namespace) -> None:
-    config = load_config(args.config)
-    ensure_runtime_workspace(config)
+    config = _load_prepared_config(args.config)
     codex = CodexRunner(config)
     state = read_runtime_state(config)
     session = codex.describe_state()
@@ -108,8 +107,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 
 def cmd_check(args: argparse.Namespace) -> None:
-    config = load_config(args.config)
-    ensure_runtime_workspace(config)
+    config = _load_prepared_config(args.config)
     results: list[tuple[str, bool, str]] = []
 
     results.append(("config.load", True, str(Path(config.config_path))))
@@ -156,8 +154,7 @@ def cmd_check(args: argparse.Namespace) -> None:
 
 
 def cmd_voices(args: argparse.Namespace) -> None:
-    config = load_config(args.config)
-    ensure_runtime_workspace(config)
+    config = _load_prepared_config(args.config)
     if args.refresh:
         output_path = Path(args.output).resolve() if args.output else Path(config.assistant_voice_catalog_path)
         voices = build_official_voice_catalog()
@@ -211,17 +208,21 @@ def _filter_compatible_voices(config, voices: list[dict]) -> list[dict]:
     return compatible
 
 
-def cmd_session(args: argparse.Namespace) -> None:
-    config = load_config(args.config)
+def _load_prepared_config(config_path: str):
+    config = load_config(config_path)
     ensure_runtime_workspace(config)
+    return load_config(config_path)
+
+
+def cmd_session(args: argparse.Namespace) -> None:
+    config = _load_prepared_config(args.config)
     codex = CodexRunner(config)
     for key, value in codex.describe_state().items():
         print(f"{key}={value}")
 
 
 def cmd_reset_session(args: argparse.Namespace) -> None:
-    config = load_config(args.config)
-    ensure_runtime_workspace(config)
+    config = _load_prepared_config(args.config)
     state_path = config.codex_session_state_file
     if os.path.exists(state_path):
         os.remove(state_path)
@@ -233,8 +234,7 @@ def cmd_reset_session(args: argparse.Namespace) -> None:
 def cmd_run(args: argparse.Namespace) -> None:
     from .bridge_runtime import BridgeRuntime
 
-    config = load_config(args.config)
-    ensure_runtime_workspace(config)
+    config = _load_prepared_config(args.config)
     runtime = BridgeRuntime(config)
 
     print(f"workspace={config.codex_workspace}")
