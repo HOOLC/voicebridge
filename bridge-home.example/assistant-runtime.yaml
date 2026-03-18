@@ -45,3 +45,21 @@ commands:
 
 schedule:
   check_interval_seconds: 15
+  tasks:
+    - name: "会话巡检"
+      cron: "*/30 * * * *"
+      type: "agent"
+      prompt: "/boss 巡检"
+      enabled: true
+    - name: "QMT 调仓复核"
+      cron: "55 14 * * 1-5"
+      type: "background_process"
+      cwd: "F:\\Quant\\Quant"
+      command: "codex.cmd"
+      args:
+        - "exec"
+        - "-C"
+        - "F:\\Quant\\Quant"
+        - "--yolo"
+        - "执行 /qmt-check"
+      enabled: false
