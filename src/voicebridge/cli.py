@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 import argparse
-import os
-import shutil
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 
 from .audio import AudioDeviceResolver
-from .codex_runner import CodexRunner
-from .config import dump_device, load_config, load_voice_catalog
-from .volcengine_audio import VolcengineAudioClient
-from .voice_catalog import build_official_voice_catalog, write_official_voice_catalog
-from .wsl_sessions import collect_recent_wsl_sessions, render_recent_wsl_sessions
+from .config import dump_device, load_config
 from .workspace import ensure_runtime_workspace, read_runtime_state
 
 
@@ -19,7 +15,7 @@ def main() -> None:
     try:
         sys.stdout.reconfigure(line_buffering=True)
         sys.stderr.reconfigure(line_buffering=True)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     parser = _build_parser()
     args = parser.parse_args()
@@ -37,38 +33,13 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--config", default="bridge.yaml")
     run_parser.set_defaults(func=cmd_run)
 
-    status_parser = subparsers.add_parser("status", help="Show current VoiceBridge session state")
+    status_parser = subparsers.add_parser("status", help="Show current VoiceBridge phone bridge state")
     status_parser.add_argument("--config", default="bridge.yaml")
     status_parser.set_defaults(func=cmd_status)
 
     check_parser = subparsers.add_parser("check", help="Run a read-only local health check")
     check_parser.add_argument("--config", default="bridge.yaml")
     check_parser.set_defaults(func=cmd_check)
-
-    voices_parser = subparsers.add_parser("voices", help="List local TTS voices from bridge-home")
-    voices_parser.add_argument("--config", default="bridge.yaml")
-    voices_parser.add_argument("--refresh", action="store_true", help="Refresh the local voice catalog from official sources")
-    voices_parser.add_argument("--output", default="", help="Write refreshed catalog to a specific YAML path")
-    voices_parser.set_defaults(func=cmd_voices)
-
-    reset_parser = subparsers.add_parser("reset-session", help="Delete the saved Codex thread id")
-    reset_parser.add_argument("--config", default="bridge.yaml")
-    reset_parser.set_defaults(func=cmd_reset_session)
-
-    session_parser = subparsers.add_parser("session", help="Show the current Codex session state")
-    session_parser.add_argument("--config", default="bridge.yaml")
-    session_parser.set_defaults(func=cmd_session)
-
-    recent_sessions_parser = subparsers.add_parser(
-        "recent-sessions",
-        help="Show recent WSL Codex sessions from ~/.codex/sessions",
-    )
-    recent_sessions_parser.add_argument("--config", default="bridge.yaml")
-    recent_sessions_parser.add_argument("--lookback-hours", type=int, default=12)
-    recent_sessions_parser.add_argument("--limit-per-workspace", type=int, default=3)
-    recent_sessions_parser.add_argument("--scan-limit", type=int, default=200)
-    recent_sessions_parser.add_argument("--json", action="store_true")
-    recent_sessions_parser.set_defaults(func=cmd_recent_sessions)
 
     return parser
 
@@ -80,42 +51,32 @@ def cmd_devices(_args: argparse.Namespace) -> None:
 
 def cmd_status(args: argparse.Namespace) -> None:
     config = _load_prepared_config(args.config)
-    codex = CodexRunner(config)
     state = read_runtime_state(config)
-    session = codex.describe_state()
     runtime = state.get("runtime") or {}
     meta = state.get("meta") or {}
     print("[install]")
-    print(f"workspace={config.codex_workspace}")
+    print(f"phone_bridge_command={config.phone_bridge_command}")
     print(f"capture_device={config.capture_device}")
     print(f"playback_device={config.playback_device}")
-    print(f"feishu_enabled={config.feishu_enabled}")
-    print(f"feishu_user_id={config.feishu_user_id or ''}")
     print(f"runtime_config={config.assistant_runtime_config_path}")
     print()
 
     print("[runtime]")
-    print(f"tts_speaker={config.volcengine_tts_speaker}")
-    print(f"tts_speed_ratio={config.volcengine_tts_speed_ratio}")
+    print(f"tts_model={config.tts_model}")
+    print(f"tts_voice_id={config.tts_voice_id}")
+    print(f"tts_sample_rate={config.tts_sample_rate}")
     print(f"interrupt_playback={config.bridge_interrupt_playback}")
-    print(f"cancel_codex_on_interrupt={config.bridge_cancel_codex_on_interrupt}")
-    print(f"scheduled_task_count={len(config.scheduled_tasks)}")
-    print(f"memory_path={config.assistant_memory_path}")
+    print(f"reply_source={config.phone_reply_source}")
+    print(f"reply_timeout_seconds={config.phone_reply_timeout_seconds}")
     print()
 
     print("[state]")
-    print(f"cli_provider={session.get('cli_provider', config.agent_cli_provider)}")
-    print(f"cli_command={session.get('cli_command', config.agent_cli_command)}")
-    print(f"thread_id={session.get('thread_id', '')}")
-    print(f"active_model={session.get('active_model', '')}")
-    print(f"resume_command={session.get('resume_command', '')}")
-    print(f"turn_count={session.get('turn_count', '')}")
+    print(f"busy={runtime.get('busy', False)}")
     print(f"queue_depth={runtime.get('queue_depth', 0)}")
-    print(f"codex_busy={runtime.get('codex_busy', False)}")
     print(f"last_user_text={runtime.get('last_user_text', '')}")
     print(f"last_reply_text={runtime.get('last_reply_text', '')}")
+    print(f"last_reply_message_id={runtime.get('last_reply_message_id', '') or meta.get('last_reply_message_id', '')}")
     print(f"last_error={runtime.get('last_error', '')}")
-    print(f"shared_thread_id={meta.get('shared_thread_id', '')}")
 
 
 def cmd_check(args: argparse.Namespace) -> None:
@@ -127,35 +88,30 @@ def cmd_check(args: argparse.Namespace) -> None:
     try:
         AudioDeviceResolver.resolve_device(config.capture_device, needs_input=True)
         results.append(("audio.capture_device", True, str(config.capture_device)))
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         results.append(("audio.capture_device", False, str(error)))
 
     try:
         AudioDeviceResolver.resolve_device(config.playback_device, needs_output=True)
         results.append(("audio.playback_device", True, str(config.playback_device)))
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         results.append(("audio.playback_device", False, str(error)))
 
     results.extend(
         [
             ("workspace.runtime_config", Path(config.assistant_runtime_config_path).exists(), config.assistant_runtime_config_path),
-            ("workspace.voice_catalog", Path(config.assistant_voice_catalog_path).exists(), config.assistant_voice_catalog_path),
-            ("workspace.memory", Path(config.assistant_memory_path).exists(), config.assistant_memory_path),
-            ("workspace.memory_dir", Path(config.assistant_daily_memory_dir).exists(), config.assistant_daily_memory_dir),
+            ("workspace.state_dir", Path(config.assistant_state_path).parent.exists(), str(Path(config.assistant_state_path).parent)),
         ]
     )
 
-    speech_ok = bool(config.volcengine_app_id and config.volcengine_access_key)
-    results.append(("credentials.speech", speech_ok, "volcengine_app_id/access_key"))
+    minimax_ok = bool(config.minimax_api_key)
+    results.append(("credentials.minimax", minimax_ok, "MINIMAX_API_KEY"))
 
-    feishu_ok = True
-    if config.feishu_enabled:
-        feishu_ok = bool(config.feishu_app_id and config.feishu_app_secret and config.feishu_user_id)
-    results.append(("credentials.feishu", feishu_ok, "feishu_enabled requires app_id/app_secret/user_id"))
+    asr_ok = bool(config.volcengine_app_id and config.volcengine_access_key)
+    results.append(("credentials.asr", asr_ok, "bridge.yaml: volcengine_app_id/access_key"))
 
-    cli_command = str(config.agent_cli_command).strip()
-    cli_ok = bool(cli_command and (Path(cli_command).exists() or shutil.which(cli_command)))
-    results.append((f"{config.agent_cli_provider}.command", cli_ok, cli_command))
+    phone_backend_ok = _wsl_command_exists(config.phone_bridge_command)
+    results.append(("phone_bridge.command", phone_backend_ok, config.phone_bridge_command))
 
     for name, ok, detail in results:
         status = "ok" if ok else "fail"
@@ -165,59 +121,18 @@ def cmd_check(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
-def cmd_voices(args: argparse.Namespace) -> None:
-    config = _load_prepared_config(args.config)
-    if args.refresh:
-        output_path = Path(args.output).resolve() if args.output else Path(config.assistant_voice_catalog_path)
-        voices = build_official_voice_catalog()
-        compatible_voices = _filter_compatible_voices(config, voices)
-        write_official_voice_catalog(output_path, compatible_voices)
-        print(f"refreshed={output_path}")
-        print(f"candidate_voice_count={len(voices)}")
-        print(f"compatible_voice_count={len(compatible_voices)}")
-        print()
-    voices = load_voice_catalog(config)
-
-    print("[active voice]")
-    print(f"tts_speaker={config.volcengine_tts_speaker}")
-    print(f"tts_volume_ratio={config.volcengine_tts_volume_ratio}")
-    print()
-    print("[voice catalog]")
-    print(f"path={config.assistant_voice_catalog_path}")
-    if not voices:
-        print("none")
-        return
-
-    print(f"count={len(voices)}")
-    for item in voices:
-        marker = "*" if item.get("id") == config.volcengine_tts_speaker else "-"
-        print(f"{marker} {item.get('name', '')} | id={item.get('id', '')}")
-        aliases = item.get("aliases") or []
-        if aliases:
-            print(f"  aliases={', '.join(str(alias) for alias in aliases)}")
-        description = str(item.get("description", "")).strip()
-        if description:
-            print(f"  description={description}")
-
-
-def _filter_compatible_voices(config, voices: list[dict]) -> list[dict]:
-    client = VolcengineAudioClient(config)
-    compatible: list[dict] = []
-    try:
-        for item in voices:
-            speaker = str(item.get("id", "")).strip()
-            if not speaker:
-                continue
-            voice_config = config.runtime.voice.model_copy(update={"tts_speaker": speaker})
-            client.config = config.model_copy(update={"runtime": config.runtime.model_copy(update={"voice": voice_config})})
-            try:
-                client.synthesize("你好")
-            except Exception:
-                continue
-            compatible.append(item)
-    finally:
-        client.close()
-    return compatible
+def _wsl_command_exists(command: str) -> bool:
+    script = f"command -v {shlex.quote(command)} >/dev/null 2>&1"
+    result = subprocess.run(
+        ["wsl", "bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def _load_prepared_config(config_path: str):
@@ -226,47 +141,18 @@ def _load_prepared_config(config_path: str):
     return load_config(config_path)
 
 
-def cmd_session(args: argparse.Namespace) -> None:
-    config = _load_prepared_config(args.config)
-    codex = CodexRunner(config)
-    for key, value in codex.describe_state().items():
-        print(f"{key}={value}")
-
-
-def cmd_recent_sessions(args: argparse.Namespace) -> None:
-    config = load_config(args.config)
-    probe = collect_recent_wsl_sessions(
-        workspace_dirs=config.wsl_session_workspace_dirs,
-        lookback_hours=args.lookback_hours,
-        limit_per_workspace=args.limit_per_workspace,
-        scan_limit=args.scan_limit,
-    )
-    print(render_recent_wsl_sessions(probe, json_mode=bool(args.json)))
-
-
-def cmd_reset_session(args: argparse.Namespace) -> None:
-    config = _load_prepared_config(args.config)
-    state_path = config.codex_session_state_file
-    if os.path.exists(state_path):
-        os.remove(state_path)
-        print(f"removed {state_path}")
-        return
-    print(f"not found: {state_path}")
-
-
 def cmd_run(args: argparse.Namespace) -> None:
     from .bridge_runtime import BridgeRuntime
 
     config = _load_prepared_config(args.config)
     runtime = BridgeRuntime(config)
 
-    print(f"workspace={config.codex_workspace}")
+    print(f"phone_bridge_command={config.phone_bridge_command}")
     print(f"capture_device={config.capture_device}")
     print(f"playback_device={config.playback_device}")
-    print(f"tts_speaker={config.volcengine_tts_speaker}")
-    print(f"codex_model={config.codex_model}")
-    print(f"feishu_enabled={config.feishu_enabled}")
-    print(f"scheduled_task_count={len(config.scheduled_tasks)}")
+    print(f"tts_model={config.tts_model}")
+    print(f"tts_voice_id={config.tts_voice_id}")
+    print(f"reply_source={config.phone_reply_source}")
     print(
         (
             f"VAD判定: mode={config.vad_mode}, rms阈值={config.vad_rms_threshold}, "

@@ -8,69 +8,36 @@ from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
-from .runtime_defaults import load_default_runtime_data, load_default_voice_catalog
+from .runtime_defaults import load_default_runtime_data
 
 
 DEFAULT_CONFIG_PATH = Path("bridge.yaml")
 
 
-class ScheduledTaskConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    cron: str
-    type: Literal["agent", "background_process"] = "agent"
-    prompt: str = ""
-    cwd: str | None = None
-    command: str | None = None
-    args: list[str] = Field(default_factory=list)
-    stdin: str = ""
-    use_agent_cli: bool = False
-    cli_provider: Literal["configured", "codex", "kimi"] = "configured"
-    use_yolo: bool | None = None
-    enabled: bool = True
-
-    @model_validator(mode="after")
-    def validate_task_payload(self) -> "ScheduledTaskConfig":
-        if self.type == "agent":
-            if not self.prompt.strip():
-                raise ValueError("agent scheduled task requires a non-empty prompt")
-            return self
-
-        if self.use_agent_cli:
-            if not self.prompt.strip():
-                raise ValueError("background_process task with use_agent_cli=true requires a non-empty prompt")
-            return self
-
-        if not str(self.command or "").strip():
-            raise ValueError("background_process task requires command or use_agent_cli=true")
-        return self
-
-
 class VoiceRuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    tts_resource_id: str = "seed-tts-2.0"
-    tts_speaker: str = "zh_female_vv_uranus_bigtts"
-    format: str = "wav"
-    sample_rate: int = 24_000
-    speed_ratio: float = 1.05
-    volume_ratio: float = 1.0
-    pitch_ratio: float = 1.0
+    tts_model: str = "speech-2.8-turbo"
+    tts_voice_id: str = "Chinese (Mandarin)_Warm_Bestie"
+    format: Literal["wav", "mp3", "flac"] = "wav"
+    sample_rate: int = 32_000
+    speed: float = 1.0
+    volume: float = 1.0
+    pitch: int = 0
+    language_boost: str = "Chinese"
 
 
 class AckRuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    default: str = "收到啦"
+    default: str = "收到"
     variants: list[str] = Field(
         default_factory=lambda: [
-            "收到啦",
-            "好呀，收到",
-            "嗯嗯，收到",
-            "在呢，收到啦",
+            "收到",
+            "好，收到",
+            "嗯，收到",
         ]
     )
 
@@ -79,7 +46,6 @@ class InteractionRuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     interrupt_playback: bool = True
-    cancel_codex_on_interrupt: bool = False
     vad_rms_threshold: int = 900
 
 
@@ -116,11 +82,13 @@ class CommandsRuntimeConfig(BaseModel):
     )
 
 
-class ScheduleRuntimeConfig(BaseModel):
+class PhoneRuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    check_interval_seconds: int = 15
-    tasks: list[ScheduledTaskConfig] = Field(default_factory=list)
+    from_name: str = "voicebridge"
+    reply_source: Literal["commentary", "final_answer", "all"] = "final_answer"
+    reply_timeout_seconds: int = 180
+    recv_poll_interval_seconds: float = 1.0
 
 
 class AssistantRuntimeConfig(BaseModel):
@@ -131,7 +99,7 @@ class AssistantRuntimeConfig(BaseModel):
     ack: AckRuntimeConfig = Field(default_factory=AckRuntimeConfig)
     interaction: InteractionRuntimeConfig = Field(default_factory=InteractionRuntimeConfig)
     commands: CommandsRuntimeConfig = Field(default_factory=CommandsRuntimeConfig)
-    schedule: ScheduleRuntimeConfig = Field(default_factory=ScheduleRuntimeConfig)
+    phone: PhoneRuntimeConfig = Field(default_factory=PhoneRuntimeConfig)
 
 
 class BridgeConfig(BaseModel):
@@ -141,47 +109,16 @@ class BridgeConfig(BaseModel):
     config_path: str = "bridge.yaml"
 
     assistant_runtime_config_path: str = "./bridge-home/assistant-runtime.yaml"
-    # Legacy compatibility fields. Runtime bootstrap no longer reads template directories.
-    assistant_runtime_example_path: str = "./bridge-home.example/assistant-runtime.yaml"
-    assistant_voice_catalog_path: str = "./bridge-home/tts-voices.yaml"
-    assistant_voice_catalog_example_path: str = "./bridge-home.example/tts-voices.yaml"
     assistant_state_path: str = "./bridge-home/assistant-state.json"
-    assistant_memory_path: str = "./bridge-home/MEMORY.md"
-    assistant_memory_example_path: str = "./bridge-home.example/MEMORY.md"
-    assistant_daily_memory_dir: str = "./bridge-home/memory"
-    assistant_daily_memory_example_dir: str = "./bridge-home.example/memory"
 
     volcengine_app_id: str | None = None
     volcengine_access_key: str | None = None
     volcengine_asr_resource_id: str = "volc.bigasr.auc_turbo"
 
-    feishu_enabled: bool = False
-    feishu_app_id: str | None = None
-    feishu_app_secret: str | None = None
-    feishu_user_id: str | None = None
-    feishu_user_id_type: str = "user_id"
+    minimax_api_key: str | None = None
+    minimax_api_base: str = "https://api.minimax.io"
 
-    assistant_cli_provider: Literal["codex", "kimi"] = "codex"
-    kimi_command: str = "kimi.exe"
-    kimi_model: str | None = None
-    codex_workspace: str = "./bridge-home"
-    codex_command: str = "codex.cmd"
-    codex_model: str | None = "gpt-5.3-codex-spark"
-    codex_fallback_model: str | None = "gpt-5"
-    codex_use_yolo: bool = True
-    codex_http_proxy: str | None = None
-    codex_https_proxy: str | None = None
-    codex_all_proxy: str | None = None
-    codex_no_proxy: str | None = None
-    codex_session_state_file: str = ".voicebridge-session.json"
-    codex_timeout_seconds: int = 600
-    codex_auto_compact_enabled: bool = True
-    codex_auto_compact_max_context_chars: int = Field(default=260_000, ge=20_000)
-    codex_auto_compact_buffer_chars: int = Field(default=120_000, ge=10_000)
-    codex_auto_compact_turn_threshold: int = Field(default=24, ge=1)
-    codex_auto_compact_summary_max_chars: int = Field(default=6_000, ge=500)
-    extra_search_paths: list[str] = Field(default_factory=list)
-    wsl_session_workspace_dirs: list[str] = Field(default_factory=lambda: ["~/Quant", "~/QuantDev"])
+    phone_bridge_command: str = "codex-feishu-agent"
 
     capture_device: str | int
     playback_device: str | int
@@ -205,32 +142,36 @@ class BridgeConfig(BaseModel):
         return samples * self.channels * 2
 
     @property
-    def volcengine_tts_resource_id(self) -> str:
-        return self.runtime.voice.tts_resource_id
+    def tts_model(self) -> str:
+        return self.runtime.voice.tts_model
 
     @property
-    def volcengine_tts_speaker(self) -> str:
-        return self.runtime.voice.tts_speaker
+    def tts_voice_id(self) -> str:
+        return self.runtime.voice.tts_voice_id
 
     @property
-    def volcengine_tts_format(self) -> str:
+    def tts_format(self) -> str:
         return self.runtime.voice.format
 
     @property
-    def volcengine_tts_sample_rate(self) -> int:
+    def tts_sample_rate(self) -> int:
         return self.runtime.voice.sample_rate
 
     @property
-    def volcengine_tts_speed_ratio(self) -> float:
-        return self.runtime.voice.speed_ratio
+    def tts_speed(self) -> float:
+        return self.runtime.voice.speed
 
     @property
-    def volcengine_tts_volume_ratio(self) -> float:
-        return self.runtime.voice.volume_ratio
+    def tts_volume(self) -> float:
+        return self.runtime.voice.volume
 
     @property
-    def volcengine_tts_pitch_ratio(self) -> float:
-        return self.runtime.voice.pitch_ratio
+    def tts_pitch(self) -> int:
+        return self.runtime.voice.pitch
+
+    @property
+    def tts_language_boost(self) -> str:
+        return self.runtime.voice.language_boost
 
     @property
     def bridge_ack_text(self) -> str:
@@ -243,10 +184,6 @@ class BridgeConfig(BaseModel):
     @property
     def bridge_interrupt_playback(self) -> bool:
         return self.runtime.interaction.interrupt_playback
-
-    @property
-    def bridge_cancel_codex_on_interrupt(self) -> bool:
-        return self.runtime.interaction.cancel_codex_on_interrupt
 
     @property
     def vad_rms_threshold(self) -> int:
@@ -269,40 +206,20 @@ class BridgeConfig(BaseModel):
         return self.runtime.commands.ignore_phrases
 
     @property
-    def scheduler_check_interval_seconds(self) -> int:
-        return self.runtime.schedule.check_interval_seconds
+    def phone_from_name(self) -> str:
+        return self.runtime.phone.from_name
 
     @property
-    def scheduled_tasks(self) -> list[ScheduledTaskConfig]:
-        return self.runtime.schedule.tasks
+    def phone_reply_source(self) -> str:
+        return self.runtime.phone.reply_source
 
     @property
-    def agent_cli_provider(self) -> str:
-        return "kimi" if self.assistant_cli_provider == "kimi" else "codex"
+    def phone_reply_timeout_seconds(self) -> int:
+        return self.runtime.phone.reply_timeout_seconds
 
     @property
-    def agent_cli_command(self) -> str:
-        return self.kimi_command if self.agent_cli_provider == "kimi" else self.codex_command
-
-    @property
-    def agent_primary_model(self) -> str | None:
-        if self.agent_cli_provider == "kimi":
-            return self.kimi_model
-        return self.codex_model
-
-    @property
-    def agent_fallback_model(self) -> str | None:
-        if self.agent_cli_provider == "kimi":
-            return None
-        return self.codex_fallback_model
-
-    @property
-    def agent_cli_name(self) -> str:
-        return "Kimi CLI" if self.agent_cli_provider == "kimi" else "Codex CLI"
-
-    @property
-    def codex_auto_compact_trigger_chars(self) -> int:
-        return max(20_000, self.codex_auto_compact_max_context_chars - self.codex_auto_compact_buffer_chars)
+    def phone_recv_poll_interval_seconds(self) -> float:
+        return self.runtime.phone.recv_poll_interval_seconds
 
 
 def load_config(path: str | Path | None = None) -> BridgeConfig:
@@ -319,56 +236,21 @@ def load_config(path: str | Path | None = None) -> BridgeConfig:
         config_path,
         str(data.get("assistant_runtime_config_path") or BridgeConfig.model_fields["assistant_runtime_config_path"].default),
     )
-    catalog_path = _resolve_local_path(
-        config_path,
-        str(data.get("assistant_voice_catalog_path") or BridgeConfig.model_fields["assistant_voice_catalog_path"].default),
-    )
-    runtime_example_path = _resolve_local_path(
-        config_path,
-        str(data.get("assistant_runtime_example_path") or BridgeConfig.model_fields["assistant_runtime_example_path"].default),
-    )
-    catalog_example_path = _resolve_local_path(
-        config_path,
-        str(
-            data.get("assistant_voice_catalog_example_path")
-            or BridgeConfig.model_fields["assistant_voice_catalog_example_path"].default
-        ),
-    )
-
     runtime_data = _merge_yaml_object(load_default_runtime_data(), _load_yaml_object(runtime_path))
-    voice_catalog = _load_voice_catalog_file(catalog_path) or load_default_voice_catalog()
-    runtime_payload = _build_runtime_payload(runtime_data, voice_catalog, runtime_path)
+    runtime_payload = _build_runtime_payload(runtime_data)
+
     config = BridgeConfig.model_validate({**data, "runtime": runtime_payload})
     return config.model_copy(
         update={
             "project_root": str(config_path.parent.resolve()),
             "config_path": str(config_path.resolve()),
             "assistant_runtime_config_path": str(runtime_path),
-            "assistant_runtime_example_path": str(runtime_example_path),
-            "assistant_voice_catalog_path": str(catalog_path),
-            "assistant_voice_catalog_example_path": str(catalog_example_path),
             "assistant_state_path": str(_resolve_local_path(config_path, config.assistant_state_path)),
-            "assistant_memory_path": str(_resolve_local_path(config_path, config.assistant_memory_path)),
-            "assistant_memory_example_path": str(_resolve_local_path(config_path, config.assistant_memory_example_path)),
-            "assistant_daily_memory_dir": str(_resolve_local_path(config_path, config.assistant_daily_memory_dir)),
-            "assistant_daily_memory_example_dir": str(
-                _resolve_local_path(config_path, config.assistant_daily_memory_example_dir)
-            ),
-            "kimi_command": _expand_env_vars(config.kimi_command),
-            "kimi_model": _expand_env_vars(config.kimi_model) if config.kimi_model else None,
-            "codex_workspace": str(_resolve_local_path(config_path, config.codex_workspace)),
-            "codex_command": _expand_env_vars(config.codex_command),
-            "codex_session_state_file": str(_resolve_local_path(config_path, config.codex_session_state_file)),
-            "extra_search_paths": [_expand_env_vars(item) for item in config.extra_search_paths],
-            "wsl_session_workspace_dirs": [
-                _expand_env_vars(item)
-                for item in config.wsl_session_workspace_dirs
-                if str(item).strip()
-            ],
-            "codex_http_proxy": _expand_env_vars(config.codex_http_proxy) if config.codex_http_proxy else None,
-            "codex_https_proxy": _expand_env_vars(config.codex_https_proxy) if config.codex_https_proxy else None,
-            "codex_all_proxy": _expand_env_vars(config.codex_all_proxy) if config.codex_all_proxy else None,
-            "codex_no_proxy": _expand_env_vars(config.codex_no_proxy) if config.codex_no_proxy else None,
+            "volcengine_app_id": _expand_env_vars(config.volcengine_app_id) if config.volcengine_app_id else None,
+            "volcengine_access_key": _expand_env_vars(config.volcengine_access_key) if config.volcengine_access_key else None,
+            "minimax_api_key": _expand_env_vars(config.minimax_api_key) if config.minimax_api_key else None,
+            "minimax_api_base": _expand_env_vars(config.minimax_api_base).rstrip("/"),
+            "phone_bridge_command": _expand_env_vars(config.phone_bridge_command),
         }
     )
 
@@ -380,10 +262,6 @@ def dump_device(device: dict[str, Any], index: int) -> str:
     outputs = device.get("max_output_channels")
     rate = device.get("default_samplerate")
     return f"[{index}] {name} | hostapi={hostapi} | in={inputs} | out={outputs} | rate={rate}"
-
-
-def load_voice_catalog(config: BridgeConfig) -> list[dict[str, Any]]:
-    return _load_voice_catalog_file(Path(config.assistant_voice_catalog_path)) or load_default_voice_catalog()
 
 
 def _resolve_local_path(config_path: Path, raw_path: str) -> Path:
@@ -399,55 +277,31 @@ def _expand_env_vars(value: str) -> str:
 
 def _apply_env_defaults(data: dict[str, Any]) -> None:
     env_defaults = {
-        "volcengine_app_id": (
-            os.getenv("VOLCENGINE_APP_ID")
-            or os.getenv("DOUBAO_APP_ID")
-            or os.getenv("VOLC_APP_ID")
-        ),
-        "volcengine_access_key": (
-            os.getenv("VOLCENGINE_ACCESS_KEY")
-            or os.getenv("DOUBAO_ACCESS_KEY")
-            or os.getenv("DOUBAO_ACCESS_TOKEN")
-            or os.getenv("DOUBAO_API_KEY")
-            or os.getenv("VOLC_ACCESS_KEY")
-        ),
-        "feishu_app_id": os.getenv("FEISHU_APP_ID") or os.getenv("LARK_APP_ID") or os.getenv("APP_ID"),
-        "feishu_app_secret": os.getenv("FEISHU_APP_SECRET") or os.getenv("LARK_APP_SECRET") or os.getenv("APP_SECRET"),
-        "feishu_user_id": os.getenv("FEISHU_USER_ID") or os.getenv("LARK_USER_ID"),
-        "codex_http_proxy": os.getenv("http_proxy") or os.getenv("HTTP_PROXY"),
-        "codex_https_proxy": os.getenv("https_proxy") or os.getenv("HTTPS_PROXY"),
-        "codex_all_proxy": os.getenv("all_proxy") or os.getenv("ALL_PROXY"),
-        "codex_no_proxy": os.getenv("no_proxy") or os.getenv("NO_PROXY"),
+        "minimax_api_key": os.getenv("MINIMAX_API_KEY") or os.getenv("MINIMAX_TOKEN_PLAN_API_KEY"),
+        "minimax_api_base": os.getenv("MINIMAX_API_BASE"),
     }
     for key, value in env_defaults.items():
         if (key not in data or data.get(key) in (None, "")) and value:
             data[key] = value
 
 
-def _build_runtime_payload(
-    runtime_data: dict[str, Any],
-    voice_catalog: list[dict[str, Any]],
-    runtime_config_path: Path,
-) -> dict[str, Any]:
+def _build_runtime_payload(runtime_data: dict[str, Any]) -> dict[str, Any]:
     voice_data = runtime_data.get("voice") if isinstance(runtime_data.get("voice"), dict) else {}
     ack_data = runtime_data.get("ack") if isinstance(runtime_data.get("ack"), dict) else {}
     interaction_data = runtime_data.get("interaction") if isinstance(runtime_data.get("interaction"), dict) else {}
     commands_data = runtime_data.get("commands") if isinstance(runtime_data.get("commands"), dict) else {}
-    schedule_data = runtime_data.get("schedule") if isinstance(runtime_data.get("schedule"), dict) else {}
+    phone_data = runtime_data.get("phone") if isinstance(runtime_data.get("phone"), dict) else {}
 
     runtime_payload = {
         "version": int(runtime_data.get("version") or 1),
         "voice": {
-            "tts_resource_id": _first_present(
-                voice_data.get("tts_resource_id"),
-                VoiceRuntimeConfig.model_fields["tts_resource_id"].default,
+            "tts_model": _first_present(
+                voice_data.get("tts_model"),
+                VoiceRuntimeConfig.model_fields["tts_model"].default,
             ),
-            "tts_speaker": _resolve_tts_speaker(
-                _first_present(
-                    voice_data.get("tts_speaker"),
-                    VoiceRuntimeConfig.model_fields["tts_speaker"].default,
-                ),
-                voice_catalog,
+            "tts_voice_id": _first_present(
+                voice_data.get("tts_voice_id"),
+                VoiceRuntimeConfig.model_fields["tts_voice_id"].default,
             ),
             "format": _first_present(
                 voice_data.get("format"),
@@ -457,17 +311,21 @@ def _build_runtime_payload(
                 voice_data.get("sample_rate"),
                 VoiceRuntimeConfig.model_fields["sample_rate"].default,
             ),
-            "speed_ratio": _first_present(
-                voice_data.get("speed_ratio"),
-                VoiceRuntimeConfig.model_fields["speed_ratio"].default,
+            "speed": _first_present(
+                voice_data.get("speed"),
+                VoiceRuntimeConfig.model_fields["speed"].default,
             ),
-            "volume_ratio": _first_present(
-                voice_data.get("volume_ratio"),
-                VoiceRuntimeConfig.model_fields["volume_ratio"].default,
+            "volume": _first_present(
+                voice_data.get("volume"),
+                VoiceRuntimeConfig.model_fields["volume"].default,
             ),
-            "pitch_ratio": _first_present(
-                voice_data.get("pitch_ratio"),
-                VoiceRuntimeConfig.model_fields["pitch_ratio"].default,
+            "pitch": _first_present(
+                voice_data.get("pitch"),
+                VoiceRuntimeConfig.model_fields["pitch"].default,
+            ),
+            "language_boost": _first_present(
+                voice_data.get("language_boost"),
+                VoiceRuntimeConfig.model_fields["language_boost"].default,
             ),
         },
         "ack": {
@@ -486,10 +344,6 @@ def _build_runtime_payload(
             "interrupt_playback": _first_present(
                 interaction_data.get("interrupt_playback"),
                 InteractionRuntimeConfig.model_fields["interrupt_playback"].default,
-            ),
-            "cancel_codex_on_interrupt": _first_present(
-                interaction_data.get("cancel_codex_on_interrupt"),
-                InteractionRuntimeConfig.model_fields["cancel_codex_on_interrupt"].default,
             ),
             "vad_rms_threshold": _first_present(
                 interaction_data.get("vad_rms_threshold"),
@@ -520,12 +374,23 @@ def _build_runtime_payload(
                 )
             ),
         },
-        "schedule": {
-            "check_interval_seconds": _first_present(
-                schedule_data.get("check_interval_seconds"),
-                ScheduleRuntimeConfig.model_fields["check_interval_seconds"].default,
+        "phone": {
+            "from_name": _first_present(
+                phone_data.get("from_name"),
+                PhoneRuntimeConfig.model_fields["from_name"].default,
             ),
-            "tasks": _normalize_tasks(schedule_data.get("tasks"), runtime_config_path=runtime_config_path),
+            "reply_source": _first_present(
+                phone_data.get("reply_source"),
+                PhoneRuntimeConfig.model_fields["reply_source"].default,
+            ),
+            "reply_timeout_seconds": _first_present(
+                phone_data.get("reply_timeout_seconds"),
+                PhoneRuntimeConfig.model_fields["reply_timeout_seconds"].default,
+            ),
+            "recv_poll_interval_seconds": _first_present(
+                phone_data.get("recv_poll_interval_seconds"),
+                PhoneRuntimeConfig.model_fields["recv_poll_interval_seconds"].default,
+            ),
         },
     }
     return AssistantRuntimeConfig.model_validate(runtime_payload).model_dump(mode="python")
@@ -536,7 +401,7 @@ def _load_yaml_object(path: Path) -> dict[str, Any]:
         return {}
     try:
         payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001
+    except Exception:
         return {}
     if isinstance(payload, dict):
         return payload
@@ -554,64 +419,6 @@ def _merge_yaml_object(base: dict[str, Any], override: dict[str, Any]) -> dict[s
     return merged
 
 
-def _load_voice_catalog_file(catalog_path: Path) -> list[dict[str, Any]]:
-    if not catalog_path.exists():
-        return []
-    try:
-        payload = yaml.safe_load(catalog_path.read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001
-        return []
-    if not isinstance(payload, dict):
-        return []
-    voices = payload.get("voices")
-    if not isinstance(voices, list):
-        return []
-
-    normalized: list[dict[str, Any]] = []
-    for item in voices:
-        if not isinstance(item, dict):
-            continue
-        voice_id = str(item.get("id", "")).strip()
-        if not voice_id:
-            continue
-        aliases = item.get("aliases")
-        alias_list = []
-        if isinstance(aliases, list):
-            alias_list = [str(alias).strip() for alias in aliases if str(alias).strip()]
-        normalized.append(
-            {
-                "id": voice_id,
-                "name": str(item.get("name") or voice_id).strip(),
-                "aliases": alias_list,
-                "description": str(item.get("description") or "").strip(),
-            }
-        )
-    if normalized:
-        return normalized
-    return []
-
-
-def _normalize_tasks(runtime_tasks: Any, *, runtime_config_path: Path) -> list[dict[str, Any]]:
-    if not isinstance(runtime_tasks, list):
-        return []
-    normalized: list[dict[str, Any]] = []
-    for item in runtime_tasks:
-        if not isinstance(item, dict):
-            continue
-        payload = dict(item)
-        cwd = payload.get("cwd")
-        if cwd not in (None, ""):
-            payload["cwd"] = str(_resolve_local_path(runtime_config_path, str(cwd)))
-        command = payload.get("command")
-        if command not in (None, ""):
-            payload["command"] = _expand_env_vars(str(command))
-        args = payload.get("args")
-        if isinstance(args, list):
-            payload["args"] = [_expand_env_vars(str(arg)) for arg in args]
-        normalized.append(ScheduledTaskConfig.model_validate(payload).model_dump(mode="python"))
-    return normalized
-
-
 def _normalize_string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -625,25 +432,6 @@ def _first_present(*values: Any) -> Any:
     return None
 
 
-def _resolve_tts_speaker(value: Any, voice_catalog: list[dict[str, Any]]) -> str:
-    target = str(value).strip()
-    if not target:
-        return ""
-    normalized_target = _normalize_catalog_key(target)
-    for item in voice_catalog:
-        candidates = [str(item.get("id", "")).strip(), str(item.get("name", "")).strip()]
-        aliases = item.get("aliases")
-        if isinstance(aliases, list):
-            candidates.extend(str(alias).strip() for alias in aliases if str(alias).strip())
-        if normalized_target in {_normalize_catalog_key(candidate) for candidate in candidates if candidate}:
-            return str(item.get("id", "")).strip() or target
-    return target
-
-
-def _normalize_catalog_key(value: str) -> str:
-    return re.sub(r"[\s_\-]+", "", value).lower()
-
-
 def frame_rms(frame_bytes: bytes) -> int:
     if not frame_bytes:
         return 0
@@ -652,3 +440,7 @@ def frame_rms(frame_bytes: bytes) -> int:
         return 0
     energy = sum(int(sample) * int(sample) for sample in samples)
     return int(math.sqrt(energy / len(samples)))
+
+
+def normalize_command_text(text: str) -> str:
+    return re.sub(r"[\s，。！？、,.!?：:；;“”\"'（）()\\-]+", "", text).lower()

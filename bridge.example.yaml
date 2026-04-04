@@ -1,40 +1,12 @@
+assistant_runtime_config_path: "./bridge-home/assistant-runtime.yaml"
+assistant_state_path: "./bridge-home/assistant-state.json"
+
 volcengine_app_id:
 volcengine_access_key:
 volcengine_asr_resource_id: "volc.bigasr.auc_turbo"
 
-assistant_runtime_config_path: "./bridge-home/assistant-runtime.yaml"
-assistant_runtime_example_path: "./bridge-home.example/assistant-runtime.yaml"
-assistant_voice_catalog_path: "./bridge-home/tts-voices.yaml"
-assistant_voice_catalog_example_path: "./bridge-home.example/tts-voices.yaml"
-assistant_state_path: "./bridge-home/assistant-state.json"
-assistant_memory_path: "./bridge-home/MEMORY.md"
-assistant_memory_example_path: "./bridge-home.example/MEMORY.md"
-assistant_daily_memory_dir: "./bridge-home/memory"
-assistant_daily_memory_example_dir: "./bridge-home.example/memory"
-
-feishu_enabled: false
-feishu_app_id:
-feishu_app_secret:
-feishu_user_id:
-feishu_user_id_type: "user_id"
-
-assistant_cli_provider: "codex"
-kimi_command: "kimi.exe"
-codex_workspace: "./bridge-home"
-codex_command: "codex.cmd"
-codex_model: "gpt-5.3-codex-spark"
-codex_fallback_model: "gpt-5"
-codex_use_yolo: true
-codex_session_state_file: ".voicebridge-session.json"
-codex_timeout_seconds: 600
-codex_auto_compact_enabled: true
-codex_auto_compact_max_context_chars: 260000
-codex_auto_compact_buffer_chars: 120000
-codex_auto_compact_turn_threshold: 24
-codex_auto_compact_summary_max_chars: 6000
-wsl_session_workspace_dirs:
-  - "~/Quant"
-  - "~/QuantDev"
+minimax_api_base: "https://api.minimax.io"
+phone_bridge_command: "codex-feishu-agent"
 
 capture_device: "Voicemeeter Out B1"
 playback_device: "Voicemeeter AUX Input"

@@ -17,24 +17,23 @@ class AssistantRuntimeStore:
         normalized = self._read_state()
         self._write_state(normalized)
 
-    def sync_runtime(self, config: BridgeConfig, *, shared_thread_id: str = "") -> None:
+    def sync_runtime(self, config: BridgeConfig, *, last_reply_message_id: str = "") -> None:
         self._update_meta(
             runtime_summary={
-                "tts_speaker": config.volcengine_tts_speaker,
-                "tts_speed_ratio": config.volcengine_tts_speed_ratio,
+                "tts_model": config.tts_model,
+                "tts_voice_id": config.tts_voice_id,
                 "interrupt_playback": config.bridge_interrupt_playback,
-                "cancel_codex_on_interrupt": config.bridge_cancel_codex_on_interrupt,
-                "feishu_enabled": config.feishu_enabled,
-                "scheduled_task_count": len(config.scheduled_tasks),
+                "phone_bridge_command": config.phone_bridge_command,
+                "reply_source": config.phone_reply_source,
             },
-            shared_thread_id=shared_thread_id,
+            last_reply_message_id=last_reply_message_id,
         )
 
     def set_queue_depth(self, depth: int) -> None:
         self._update_runtime(queue_depth=max(0, depth))
 
-    def set_codex_busy(self, busy: bool) -> None:
-        self._update_runtime(codex_busy=busy)
+    def set_busy(self, busy: bool) -> None:
+        self._update_runtime(busy=busy)
 
     def record_user_turn(
         self,
@@ -43,14 +42,12 @@ class AssistantRuntimeStore:
         transcript: str,
         meaningful: bool,
         action: str,
-        source: str,
     ) -> None:
         self._update_runtime(
             last_user_turn_id=turn_id,
             last_user_text=transcript,
             last_user_meaningful=meaningful,
             last_user_action=action,
-            last_user_source=source,
         )
 
     def record_reply(
@@ -58,23 +55,19 @@ class AssistantRuntimeStore:
         *,
         turn_id: int,
         text: str,
-        source: str,
         spoken: bool,
-        thread_id: str = "",
+        message_id: str,
     ) -> None:
         updates = {
             "last_reply_text": text,
             "last_reply_turn_id": turn_id,
-            "last_reply_source": source,
             "last_reply_spoken": spoken,
+            "last_reply_message_id": message_id,
         }
         if spoken:
             updates["last_spoken_reply_text"] = text
         self._update_runtime(**updates)
-        self._update_meta(shared_thread_id=thread_id or None)
-
-    def mark_silence(self, *, turn_id: int, source: str) -> None:
-        self._update_runtime(last_silence_turn_id=turn_id, last_silence_source=source)
+        self._update_meta(last_reply_message_id=message_id)
 
     def record_error(self, message: str) -> None:
         self._update_runtime(last_error=str(message).strip())
@@ -86,6 +79,20 @@ class AssistantRuntimeStore:
         with self._lock:
             state = self._read_state()
         return str(state.get("runtime", {}).get("last_spoken_reply_text", "")).strip()
+
+    def get_last_reply_message_id(self) -> str:
+        with self._lock:
+            state = self._read_state()
+        runtime = state.get("runtime") or {}
+        meta = state.get("meta") or {}
+        return str(runtime.get("last_reply_message_id") or meta.get("last_reply_message_id") or "").strip()
+
+    def remember_last_reply_message_id(self, message_id: str) -> None:
+        clean_message_id = str(message_id).strip()
+        if not clean_message_id:
+            return
+        self._update_runtime(last_reply_message_id=clean_message_id)
+        self._update_meta(last_reply_message_id=clean_message_id)
 
     def _update_runtime(self, **updates: Any) -> None:
         with self._lock:
@@ -114,7 +121,7 @@ class AssistantRuntimeStore:
     def _read_state(self) -> dict[str, Any]:
         try:
             payload = json.loads(self.state_path.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
+        except Exception:
             payload = {}
         return self._normalize_state(payload if isinstance(payload, dict) else {})
 
@@ -126,24 +133,21 @@ class AssistantRuntimeStore:
         return {
             "updated_at": _now(),
             "meta": {
-                "shared_thread_id": "",
+                "last_reply_message_id": "",
                 "runtime_summary": {},
             },
             "runtime": {
-                "codex_busy": False,
+                "busy": False,
                 "queue_depth": 0,
                 "last_user_text": "",
                 "last_user_turn_id": 0,
                 "last_user_action": "",
                 "last_user_meaningful": False,
-                "last_user_source": "",
                 "last_reply_text": "",
                 "last_reply_turn_id": 0,
-                "last_reply_source": "",
                 "last_reply_spoken": False,
+                "last_reply_message_id": "",
                 "last_spoken_reply_text": "",
-                "last_silence_turn_id": 0,
-                "last_silence_source": "",
                 "last_error": "",
             },
         }
@@ -162,9 +166,9 @@ class AssistantRuntimeStore:
             runtime_summary = meta.get("runtime_summary")
             if isinstance(runtime_summary, dict):
                 normalized["meta"]["runtime_summary"] = runtime_summary
-            shared_thread_id = meta.get("shared_thread_id")
-            if shared_thread_id not in (None, ""):
-                normalized["meta"]["shared_thread_id"] = str(shared_thread_id)
+            last_reply_message_id = meta.get("last_reply_message_id")
+            if last_reply_message_id not in (None, ""):
+                normalized["meta"]["last_reply_message_id"] = str(last_reply_message_id)
 
         runtime = payload.get("runtime")
         if isinstance(runtime, dict):
