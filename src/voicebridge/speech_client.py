@@ -92,7 +92,8 @@ class SpeechClient:
         response.raise_for_status()
         payload = response.json()
         base_resp = payload.get("base_resp") if isinstance(payload, dict) else {}
-        status_code = int((base_resp or {}).get("status_code", -1) or -1)
+        status_code_raw = (base_resp or {}).get("status_code", -1)
+        status_code = int(status_code_raw if status_code_raw is not None else -1)
         if status_code != 0:
             raise RuntimeError(f"MiniMax TTS failed: {payload}")
         data = payload.get("data") if isinstance(payload, dict) else {}

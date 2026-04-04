@@ -8,7 +8,7 @@ import yaml
 DEFAULT_ASSISTANT_RUNTIME_YAML = """version: 1
 
 voice:
-  tts_model: "speech-2.8-turbo"
+  tts_model: "speech-2.8-hd"
   tts_voice_id: "Chinese (Mandarin)_Warm_Bestie"
   format: "wav"
   sample_rate: 32000

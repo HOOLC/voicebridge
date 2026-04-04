@@ -8,7 +8,7 @@ VoiceBridge 2.0 是一个只保留电话桥接能力的本地服务。
 - 本地做语音识别
 - 通过 WSL `codex-feishu-agent phone-send` 把文本发给后端
 - 通过 WSL `codex-feishu-agent phone-recv` 取最终稳定回复
-- 用 MiniMax TTS 合成语音并播回电话链路
+- 用 MiniMax TTS HD 合成语音并播回电话链路
 
 仓库里不再承载这些旧能力：
 
@@ -91,7 +91,7 @@ volcengine_app_id:
 volcengine_access_key:
 volcengine_asr_resource_id: "volc.bigasr.auc_turbo"
 
-minimax_api_base: "https://api.minimax.io"
+minimax_api_base: "https://api.minimaxi.com"
 phone_bridge_command: "codex-feishu-agent"
 
 capture_device: "Voicemeeter Out B1"
@@ -104,7 +104,7 @@ playback_device: "Voicemeeter AUX Input"
 version: 1
 
 voice:
-  tts_model: "speech-2.8-turbo"
+  tts_model: "speech-2.8-hd"
   tts_voice_id: "Chinese (Mandarin)_Warm_Bestie"
   format: "wav"
   sample_rate: 32000

@@ -5,7 +5,7 @@ volcengine_app_id:
 volcengine_access_key:
 volcengine_asr_resource_id: "volc.bigasr.auc_turbo"
 
-minimax_api_base: "https://api.minimax.io"
+minimax_api_base: "https://api.minimaxi.com"
 phone_bridge_command: "codex-feishu-agent"
 
 capture_device: "Voicemeeter Out B1"

@@ -19,7 +19,7 @@ DEFAULT_CONFIG_PATH = Path("bridge.yaml")
 class VoiceRuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    tts_model: str = "speech-2.8-turbo"
+    tts_model: str = "speech-2.8-hd"
     tts_voice_id: str = "Chinese (Mandarin)_Warm_Bestie"
     format: Literal["wav", "mp3", "flac"] = "wav"
     sample_rate: int = 32_000
@@ -116,7 +116,7 @@ class BridgeConfig(BaseModel):
     volcengine_asr_resource_id: str = "volc.bigasr.auc_turbo"
 
     minimax_api_key: str | None = None
-    minimax_api_base: str = "https://api.minimax.io"
+    minimax_api_base: str = "https://api.minimaxi.com"
 
     phone_bridge_command: str = "codex-feishu-agent"
 
