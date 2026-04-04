@@ -181,6 +181,7 @@ class BridgeConfig(BaseModel):
     codex_auto_compact_turn_threshold: int = Field(default=24, ge=1)
     codex_auto_compact_summary_max_chars: int = Field(default=6_000, ge=500)
     extra_search_paths: list[str] = Field(default_factory=list)
+    wsl_session_workspace_dirs: list[str] = Field(default_factory=lambda: ["~/Quant", "~/QuantDev"])
 
     capture_device: str | int
     playback_device: str | int
@@ -359,6 +360,11 @@ def load_config(path: str | Path | None = None) -> BridgeConfig:
             "codex_command": _expand_env_vars(config.codex_command),
             "codex_session_state_file": str(_resolve_local_path(config_path, config.codex_session_state_file)),
             "extra_search_paths": [_expand_env_vars(item) for item in config.extra_search_paths],
+            "wsl_session_workspace_dirs": [
+                _expand_env_vars(item)
+                for item in config.wsl_session_workspace_dirs
+                if str(item).strip()
+            ],
             "codex_http_proxy": _expand_env_vars(config.codex_http_proxy) if config.codex_http_proxy else None,
             "codex_https_proxy": _expand_env_vars(config.codex_https_proxy) if config.codex_https_proxy else None,
             "codex_all_proxy": _expand_env_vars(config.codex_all_proxy) if config.codex_all_proxy else None,

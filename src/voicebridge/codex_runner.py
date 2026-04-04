@@ -15,6 +15,7 @@ from typing import Any
 
 from .config import BridgeConfig
 from .interactions import AssistantReply, TurnSource, parse_assistant_reply
+from .wsl_sessions import collect_recent_wsl_sessions
 from .workspace import load_memory_context
 
 
@@ -499,7 +500,7 @@ class CodexRunner:
 
         return (
             "这是巡检 / 状态汇报类请求。\n"
-            "查看和巡检本质上是同一类任务：都要总结 tmux session 和当前工作目录里的相关上下文；区别只是巡检可以发督促，查看不发督促。\n"
+            "查看和巡检本质上是同一类任务：都要总结 WSL session 文件采样结果和当前工作目录里的相关上下文；当前默认都只做观察和汇报，不自动推进 session。\n"
             f"{format_rule}"
             "巡检口径和汇报重点，优先遵循当前工作目录里的 AGENTS.md。\n"
             "必须先基于下面这份程序侧预采样结果作答，不要自己猜 session 数量，也不要拿旧上下文补出预采样里不存在的 session。\n"
@@ -509,239 +510,54 @@ class CodexRunner:
 
     def _collect_patrol_context(self) -> str:
         timestamp = datetime.now().isoformat(timespec="seconds")
-        session_result = self._run_preflight_command(["wsl", "tmux", "list-sessions"], timeout=10)
-        if session_result["returncode"] != 0:
+        try:
+            probe = collect_recent_wsl_sessions(
+                workspace_dirs=self.config.wsl_session_workspace_dirs,
+                lookback_hours=12,
+                limit_per_workspace=3,
+                scan_limit=200,
+            )
+        except RuntimeError as error:
             return (
                 "程序预采样结果：\n"
                 f"- 采样时间：{timestamp}\n"
-                f"- tmux list-sessions 失败：{session_result['output'] or '无输出'}\n"
+                f"- recent-sessions 失败：{error}\n"
             )
-
-        session_lines = [line.strip() for line in session_result["output"].splitlines() if line.strip()]
-        if not session_lines:
-            return (
-                "程序预采样结果：\n"
-                f"- 采样时间：{timestamp}\n"
-                "- tmux 当前无 session\n"
-            )
-
-        pane_result = self._run_preflight_command(
-            [
-                "wsl",
-                "tmux",
-                "list-panes",
-                "-a",
-                "-F",
-                "#{session_name}:#{window_index}.#{pane_index} pid=#{pane_pid} cmd=#{pane_current_command} title=#{pane_title}",
-            ],
-            timeout=10,
-        )
-        pane_lines = [line.strip() for line in pane_result["output"].splitlines() if line.strip()]
-        pane_items = [self._parse_pane_line(line) for line in pane_lines]
-        pane_items = [item for item in pane_items if item]
-
-        first_captures: dict[str, str] = {}
-        for item in pane_items:
-            first_captures[item["target"]] = self._capture_pane(item["target"])
-
-        time.sleep(3)
-
-        second_captures: dict[str, str] = {}
-        for item in pane_items:
-            second_captures[item["target"]] = self._capture_pane(item["target"])
 
         lines = [
             "程序预采样结果：",
             f"- 采样时间：{timestamp}",
-            f"- 实际 session 数：{len(session_lines)}",
+            "- 数据来源：WSL `~/.codex/sessions` session 文件",
+            "- 预采样命令：`python .\\main.py recent-sessions --json`",
+            f"- 工作目录配置：{', '.join(self.config.wsl_session_workspace_dirs) or '未配置'}",
+            "- 汇报窗口：最近 12 小时",
+            f"- 扫描文件数：{probe.get('scanned_file_count', 0)}",
+            f"- 命中 session 数：{probe.get('matched_session_count', 0)}",
         ]
 
-        for session_line in session_lines:
-            lines.append(f"- session: {session_line}")
-
-        if pane_result["returncode"] != 0:
-            lines.append(f"- list-panes 失败：{pane_result['output'] or '无输出'}")
+        workspaces = probe.get("workspaces") or []
+        if not workspaces:
+            lines.append("- 工作目录命中：0")
             return "\n".join(lines) + "\n"
 
-        if not pane_items:
-            lines.append("- list-panes 返回为空，无法识别 pane")
-            return "\n".join(lines) + "\n"
-
-        for item in pane_items:
-            target = item["target"]
-            child_processes = self._get_child_processes(item["pane_pid"]) if item["pane_pid"] else ""
-            agent_type = self._detect_agent_type(
-                pane_command=item["pane_command"],
-                pane_title=item["pane_title"],
-                child_processes=child_processes,
-            )
-            snap1 = first_captures.get(target, "")
-            snap2 = second_captures.get(target, "")
-            status_hint = self._classify_patrol_status(agent_type=agent_type, snap1=snap1, snap2=snap2)
-            delta_hint = "diff" if snap1 and snap2 and snap1 != snap2 else "same"
-
-            lines.append(
-                f"\n[{item['session_name']}] target={target} agent={agent_type} cmd={item['pane_command'] or '-'} "
-                f"title={item['pane_title'] or '-'} status_hint={status_hint} snapshots={delta_hint}"
-            )
-            if child_processes:
-                lines.append("child_processes:")
-                lines.append(child_processes)
-            lines.append("snapshot_last_20:")
-            lines.append(snap2 or "(capture failed)")
+        for workspace in workspaces:
+            label = workspace.get("label", "")
+            cwd_prefix = workspace.get("cwd_prefix", "")
+            matched_count = workspace.get("matched_count", 0)
+            sessions = workspace.get("sessions") or []
+            lines.append(f"- workspace: {label} cwd={cwd_prefix} 命中={matched_count} 展示={len(sessions)}")
+            for item in sessions:
+                lines.append(
+                    f"\n[{label}] status_hint={item.get('status_hint', '-')}"
+                    f" age_minutes={item.get('age_minutes', '-')}"
+                    f" last_activity={item.get('last_activity', '-')}"
+                    f" cwd={item.get('cwd', '-')}"
+                )
+                lines.append(f"last_role={item.get('last_role', '-') or '-'}")
+                lines.append("last_excerpt:")
+                lines.append(item.get("last_excerpt", "(empty)") or "(empty)")
 
         return "\n".join(lines) + "\n"
-
-    @staticmethod
-    def _run_preflight_command(command: list[str], *, timeout: int) -> dict[str, Any]:
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-                timeout=timeout,
-            )
-        except Exception as error:  # noqa: BLE001
-            return {"returncode": -1, "output": str(error)}
-
-        output = "\n".join(
-            part.strip()
-            for part in (result.stdout, result.stderr)
-            if part and part.strip()
-        ).strip()
-        return {"returncode": result.returncode, "output": CodexRunner._clean_preflight_output(output)}
-
-    @staticmethod
-    def _clean_preflight_output(output: str) -> str:
-        if not output.strip():
-            return ""
-        cleaned_lines: list[str] = []
-        for raw_line in output.splitlines():
-            line = raw_line.rstrip()
-            stripped = line.strip()
-            if not stripped:
-                cleaned_lines.append("")
-                continue
-            lowered = stripped.lower()
-            if lowered.startswith("proxy set to:"):
-                continue
-            if "screen size is bogus" in lowered:
-                continue
-            cleaned_lines.append(line)
-        return "\n".join(cleaned_lines).strip()
-
-    @staticmethod
-    def _parse_pane_line(raw_line: str) -> dict[str, str] | None:
-        prefix, separator, suffix = raw_line.partition(" pid=")
-        if not separator:
-            return None
-
-        target, _, session_name = prefix.partition(":")
-        if not target or not session_name:
-            return None
-
-        pid_part, _, rest = suffix.partition(" cmd=")
-        cmd_part, _, title_part = rest.partition(" title=")
-        return {
-            "target": prefix.strip(),
-            "session_name": target.strip(),
-            "pane_pid": pid_part.strip(),
-            "pane_command": cmd_part.strip(),
-            "pane_title": title_part.strip(),
-        }
-
-    def _capture_pane(self, target: str) -> str:
-        result = self._run_preflight_command(
-            ["wsl", "tmux", "capture-pane", "-t", target, "-p", "-S", "-20"],
-            timeout=10,
-        )
-        return result["output"] if result["returncode"] == 0 else ""
-
-    def _get_child_processes(self, pane_pid: str) -> str:
-        if not pane_pid:
-            return ""
-        result = self._run_preflight_command(
-            ["wsl", "ps", "--ppid", pane_pid, "-o", "args="],
-            timeout=10,
-        )
-        return result["output"] if result["returncode"] == 0 else ""
-
-    @staticmethod
-    def _detect_agent_type(*, pane_command: str, pane_title: str, child_processes: str) -> str:
-        command = pane_command.strip().lower()
-        title = pane_title.strip()
-        children = child_processes.lower()
-
-        if command == "claude":
-            return "Claude"
-        if command == "node" and title.startswith("OC"):
-            return "OpenCode"
-        if command == "node" and "codex" in children:
-            return "Codex"
-        if command == "cursor":
-            return "Cursor"
-        if command in {"bash", "zsh", "fish"}:
-            return "Shell"
-        return "unknown"
-
-    @staticmethod
-    def _classify_patrol_status(*, agent_type: str, snap1: str, snap2: str) -> str:
-        if not snap1 or not snap2:
-            return "terminated"
-        if snap1 != snap2:
-            return "running"
-
-        nonempty_lines = [line.strip() for line in snap2.splitlines() if line.strip()]
-        if not nonempty_lines:
-            return "idle"
-
-        tail_10 = "\n".join(nonempty_lines[-10:])
-        tail_5 = "\n".join(nonempty_lines[-5:])
-        last_line = nonempty_lines[-1]
-
-        if any(token in tail_10 for token in ("[y/n]", "(Y/n)", "[Y/n]", "Please select", "Do you want")):
-            return "waiting-for-input"
-        if CodexRunner._has_numbered_choices(nonempty_lines[-6:]):
-            return "waiting-for-input"
-        if any(token in tail_5 for token in ("Error:", "error:", "FAILED", "Traceback (most recent call last)")):
-            return "errored"
-        if " panic " in f" {tail_5.lower()} ":
-            return "errored"
-
-        if agent_type == "Codex":
-            if "Working (" in tail_10 or "Thinking" in tail_10:
-                return "running"
-            if last_line.startswith("›") or "gpt-" in last_line:
-                return "idle"
-        elif agent_type == "Claude":
-            if last_line.startswith("❯") or last_line.startswith("⏵⏵"):
-                return "idle"
-        elif agent_type == "OpenCode":
-            if any(token in tail_10 for token in ("Thinking:", "Generating", "Queued")):
-                return "running"
-            if "enter submit" in tail_10:
-                return "waiting-for-input"
-            return "idle"
-        elif agent_type == "Shell":
-            if last_line.endswith(("$", "%", ">", "❯")):
-                return "idle"
-
-        return "idle"
-
-    @staticmethod
-    def _has_numbered_choices(lines: list[str]) -> bool:
-        matches = 0
-        for line in lines:
-            stripped = line.strip()
-            if stripped[:2].isdigit():
-                matches += 1
-                continue
-            if len(stripped) > 2 and stripped[0].isdigit() and stripped[1] == ".":
-                matches += 1
-        return matches >= 2
 
     def _parse_codex_output(
         self,

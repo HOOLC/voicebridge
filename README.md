@@ -129,6 +129,7 @@ FEISHU_USER_ID=...
 - `codex_model`
 - `codex_timeout_seconds`
 - `codex_auto_compact_enabled`
+- `wsl_session_workspace_dirs`
 - `feishu_enabled`
 
 示例：
@@ -142,6 +143,9 @@ codex_model: "gpt-5.3-codex-spark"
 codex_auto_compact_enabled: true
 codex_auto_compact_max_context_chars: 260000
 codex_auto_compact_buffer_chars: 120000
+wsl_session_workspace_dirs:
+  - "~/Quant"
+  - "~/QuantDev"
 
 feishu_enabled: true
 feishu_user_id_type: "user_id"
@@ -149,6 +153,8 @@ feishu_user_id_type: "user_id"
 capture_device: "Voicemeeter Out B1"
 playback_device: "Voicemeeter AUX Input"
 ```
+
+`recent-sessions` 会按 `wsl_session_workspace_dirs` 里的目录名分组查看 WSL `~/.codex/sessions`。如果你的工作目录不是 `~/Quant` / `~/QuantDev`，就在这里改。
 
 如果要切到 Kimi CLI，把 `assistant_cli_provider` 改成 `"kimi"` 即可；`codex_use_yolo: true` 会继续给两种 CLI 都加上 `--yolo`。
 
@@ -251,6 +257,20 @@ python .\main.py run
 
 ```powershell
 python .\main.py session
+```
+
+查看 WSL 下 `~/Quant` 和 `~/QuantDev` 最近活跃的 Codex session 文件摘要：
+
+```powershell
+python .\main.py recent-sessions
+```
+
+默认只看最近 `12` 小时内的 session。
+
+如果要给程序或其他工具消费 JSON：
+
+```powershell
+python .\main.py recent-sessions --json
 ```
 
 如果共享会话累计历史过长，系统会先自动生成一份续接摘要，再重开共享会话继续执行。默认同时看两条阈值：

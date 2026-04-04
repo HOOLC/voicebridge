@@ -11,6 +11,7 @@ from .codex_runner import CodexRunner
 from .config import dump_device, load_config, load_voice_catalog
 from .volcengine_audio import VolcengineAudioClient
 from .voice_catalog import build_official_voice_catalog, write_official_voice_catalog
+from .wsl_sessions import collect_recent_wsl_sessions, render_recent_wsl_sessions
 from .workspace import ensure_runtime_workspace, read_runtime_state
 
 
@@ -57,6 +58,17 @@ def _build_parser() -> argparse.ArgumentParser:
     session_parser = subparsers.add_parser("session", help="Show the current Codex session state")
     session_parser.add_argument("--config", default="bridge.yaml")
     session_parser.set_defaults(func=cmd_session)
+
+    recent_sessions_parser = subparsers.add_parser(
+        "recent-sessions",
+        help="Show recent WSL Codex sessions from ~/.codex/sessions",
+    )
+    recent_sessions_parser.add_argument("--config", default="bridge.yaml")
+    recent_sessions_parser.add_argument("--lookback-hours", type=int, default=12)
+    recent_sessions_parser.add_argument("--limit-per-workspace", type=int, default=3)
+    recent_sessions_parser.add_argument("--scan-limit", type=int, default=200)
+    recent_sessions_parser.add_argument("--json", action="store_true")
+    recent_sessions_parser.set_defaults(func=cmd_recent_sessions)
 
     return parser
 
@@ -219,6 +231,17 @@ def cmd_session(args: argparse.Namespace) -> None:
     codex = CodexRunner(config)
     for key, value in codex.describe_state().items():
         print(f"{key}={value}")
+
+
+def cmd_recent_sessions(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    probe = collect_recent_wsl_sessions(
+        workspace_dirs=config.wsl_session_workspace_dirs,
+        lookback_hours=args.lookback_hours,
+        limit_per_workspace=args.limit_per_workspace,
+        scan_limit=args.scan_limit,
+    )
+    print(render_recent_wsl_sessions(probe, json_mode=bool(args.json)))
 
 
 def cmd_reset_session(args: argparse.Namespace) -> None:

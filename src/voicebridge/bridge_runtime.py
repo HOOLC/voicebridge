@@ -83,7 +83,12 @@ class BridgeRuntime:
         self._log("桥接", "运行已停止")
 
     def _refresh_config(self) -> None:
-        new_config = self.config_manager.reload()
+        try:
+            new_config = self.config_manager.reload()
+        except Exception as error:  # noqa: BLE001
+            self.store.record_error(f"配置刷新失败：{error}")
+            self._log("配置", f"刷新失败，继续沿用当前配置：{error}")
+            return
         speaker_changed = new_config.volcengine_tts_speaker != self.config.volcengine_tts_speaker
         ack_changed = tuple(new_config.bridge_ack_variants) != tuple(self.config.bridge_ack_variants)
         self.config = new_config
@@ -270,7 +275,12 @@ class BridgeRuntime:
             self.store.set_queue_depth(self._queue.qsize())
             if item is None:
                 return
-            self._process_task(item)
+            try:
+                self._process_task(item)
+            except Exception as error:  # noqa: BLE001
+                self.store.set_codex_busy(False)
+                self.store.record_error(str(error))
+                self._log("桥接", f"轮次={item.turn.turn_id}，任务处理失败：{error}")
 
     def _process_task(self, task: QueuedTask) -> None:
         if task.turn.source is TurnSource.VOICE:

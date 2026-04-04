@@ -32,6 +32,9 @@ codex_auto_compact_max_context_chars: 260000
 codex_auto_compact_buffer_chars: 120000
 codex_auto_compact_turn_threshold: 24
 codex_auto_compact_summary_max_chars: 6000
+wsl_session_workspace_dirs:
+  - "~/Quant"
+  - "~/QuantDev"
 
 capture_device: "Voicemeeter Out B1"
 playback_device: "Voicemeeter AUX Input"
